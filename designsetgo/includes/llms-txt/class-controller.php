@@ -53,6 +53,11 @@ class Controller {
 	const PHYSICAL_FULL_FILE_OPTION = 'designsetgo_llms_full_txt_physical';
 
 	/**
+	 * Option key tracking whether the per-post markdown .htaccess has been backfilled.
+	 */
+	const HTACCESS_BACKFILL_OPTION = 'designsetgo_llms_htaccess_backfilled';
+
+	/**
 	 * File manager instance.
 	 *
 	 * @var File_Manager
@@ -81,18 +86,27 @@ class Controller {
 	private $conflict_detector;
 
 	/**
+	 * Per-URL content-negotiation handler.
+	 *
+	 * @var Negotiation_Handler
+	 */
+	private $negotiation_handler;
+
+	/**
 	 * Constructor.
 	 */
 	public function __construct() {
 		// Initialize components.
-		$this->file_manager      = new File_Manager();
-		$this->generator         = new Generator( $this->file_manager );
-		$this->conflict_detector = new Conflict_Detector();
-		$this->rest_controller   = new REST_Controller(
+		$this->file_manager        = new File_Manager();
+		$this->generator           = new Generator( $this->file_manager );
+		$this->conflict_detector   = new Conflict_Detector();
+		$this->rest_controller     = new REST_Controller(
 			$this->file_manager,
 			$this->generator,
 			$this->conflict_detector
 		);
+		$this->negotiation_handler = new Negotiation_Handler( $this->file_manager, $this->generator );
+		$this->negotiation_handler->register();
 
 		// Register hooks.
 		add_action( 'init', array( $this, 'add_rewrite_rule' ) );
@@ -104,6 +118,7 @@ class Controller {
 		add_action( 'transition_post_status', array( $this, 'invalidate_cache' ) );
 		add_action( 'update_option_designsetgo_settings', array( $this, 'handle_settings_update' ), 10, 2 );
 		add_action( 'init', array( $this, 'register_post_meta' ) );
+		add_action( 'init', array( $this, 'maybe_backfill_htaccess' ), 20 );
 		add_action( 'rest_api_init', array( $this->rest_controller, 'register_routes' ) );
 		add_action( 'admin_notices', array( $this->conflict_detector, 'maybe_show_notice' ) );
 		add_action( 'admin_init', array( $this->conflict_detector, 'handle_dismiss_action' ) );
@@ -374,6 +389,43 @@ class Controller {
 	}
 
 	/**
+	 * One-time backfill: drop an .htaccess into the markdown dir on legacy installs.
+	 *
+	 * New installs pick it up via ensure_directory() on the next post save; this
+	 * covers sites that enabled llms.txt before this fix shipped and haven't
+	 * re-saved settings or published a post since.
+	 */
+	public function maybe_backfill_htaccess(): void {
+		if ( get_option( self::HTACCESS_BACKFILL_OPTION ) ) {
+			return;
+		}
+
+		$settings = \DesignSetGo\Admin\Settings::get_settings();
+		if ( empty( $settings['llms_txt']['enable'] ) ) {
+			return;
+		}
+
+		$directory = $this->file_manager->get_directory();
+
+		// If the legacy dir doesn't exist yet, there is nothing to backfill.
+		// The normal post-save path will create both the dir and the .htaccess
+		// on first publish, so mark done to avoid repeating the init-time check.
+		if ( ! is_dir( $directory ) ) {
+			update_option( self::HTACCESS_BACKFILL_OPTION, 1, true );
+			return;
+		}
+
+		$this->file_manager->ensure_directory();
+
+		// Only mark done once the .htaccess is actually on disk; leaving the
+		// option unset means we retry next request if the write failed
+		// (e.g. permissions).
+		if ( file_exists( trailingslashit( $directory ) . '.htaccess' ) ) {
+			update_option( self::HTACCESS_BACKFILL_OPTION, 1, true );
+		}
+	}
+
+	/**
 	 * Register post meta for exclusion toggle.
 	 */
 	public function register_post_meta(): void {
@@ -426,10 +478,7 @@ class Controller {
 
 		$file_path = ABSPATH . 'llms.txt';
 
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Direct write for performance.
-		$result = file_put_contents( $file_path, $content );
-
-		if ( false !== $result ) {
+		if ( File_Manager::fs_put_contents( $file_path, $content ) ) {
 			update_option( self::PHYSICAL_FILE_OPTION, true, true );
 			return true;
 		}
@@ -447,11 +496,7 @@ class Controller {
 			return;
 		}
 
-		$file_path = ABSPATH . 'llms.txt';
-		if ( file_exists( $file_path ) ) {
-			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Direct file operation required.
-			unlink( $file_path );
-		}
+		File_Manager::fs_delete( ABSPATH . 'llms.txt' );
 
 		delete_option( self::PHYSICAL_FILE_OPTION );
 	}
@@ -479,10 +524,7 @@ class Controller {
 			return false;
 		}
 
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents -- Direct write for performance.
-		$result = file_put_contents( $file_path, $content );
-
-		if ( false !== $result ) {
+		if ( File_Manager::fs_put_contents( $file_path, $content ) ) {
 			update_option( self::PHYSICAL_FULL_FILE_OPTION, true, true );
 			return true;
 		}
@@ -500,11 +542,7 @@ class Controller {
 			return;
 		}
 
-		$file_path = ABSPATH . 'llms-full.txt';
-		if ( file_exists( $file_path ) ) {
-			// phpcs:ignore WordPress.WP.AlternativeFunctions.unlink_unlink -- Direct file operation required.
-			unlink( $file_path );
-		}
+		File_Manager::fs_delete( ABSPATH . 'llms-full.txt' );
 
 		delete_option( self::PHYSICAL_FULL_FILE_OPTION );
 	}

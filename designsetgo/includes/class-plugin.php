@@ -459,6 +459,62 @@ class Plugin {
 	public $extension_attrs;
 
 	/**
+	 * Style Binding instance.
+	 *
+	 * @var StyleBinding
+	 */
+	public $style_binding;
+
+	/**
+	 * Block Bindings Support instance.
+	 *
+	 * @var Block_Bindings_Support
+	 */
+	public $block_bindings_support;
+
+	/**
+	 * Query Block Controller instance.
+	 *
+	 * @var Blocks\Query\Controller
+	 */
+	public $query_controller;
+
+	/**
+	 * Query Block Bindings instance.
+	 *
+	 * @var Blocks\Query\Bindings
+	 */
+	public $query_bindings;
+
+	/**
+	 * Dynamic Tags bootstrap instance.
+	 *
+	 * @var Blocks\DynamicTags\Bootstrap
+	 */
+	public $dynamic_tags;
+
+	/**
+	 * Query Filter Index instance.
+	 *
+	 * @var Blocks\Query\FilterIndex
+	 */
+	public $filter_index;
+
+	/**
+	 * Query Filter Registry instance.
+	 *
+	 * @var Blocks\Query\FilterRegistry
+	 */
+	public $filter_registry;
+
+	/**
+	 * Query Filter Index Admin page instance.
+	 *
+	 * @var Admin\Query_Filter_Index_Admin
+	 */
+	public $query_filter_index_admin;
+
+	/**
 	 * Returns the instance.
 	 *
 	 * @return Plugin
@@ -476,21 +532,72 @@ class Plugin {
 	private function __construct() {
 		$this->load_dependencies();
 		$this->init();
+		add_action( 'admin_init', array( $this, 'maybe_upgrade' ) );
 	}
 
 	/**
 	 * Load required files.
 	 */
 	private function load_dependencies() {
+		require_once DESIGNSETGO_PATH . 'includes/class-block-visibility.php';
+		BlockVisibility::register();
 		require_once DESIGNSETGO_PATH . 'includes/class-assets.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/class-loader.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/class-form-security.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/class-form-handler.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/class-form-submissions.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/class-modal-hooks.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/class-query.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/class-query-template-controller.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/class-query-bindings-helpers.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/class-query-bindings.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/class-query-bindings-metabox.php';
+		\DesignSetGo\Blocks\Query\MetaBoxBindings::bootstrap();
+		require_once DESIGNSETGO_PATH . 'includes/blocks/class-query-bindings-pods.php';
+		\DesignSetGo\Blocks\Query\PodsBindings::bootstrap();
+		require_once DESIGNSETGO_PATH . 'includes/blocks/class-query-bindings-jetengine.php';
+		\DesignSetGo\Blocks\Query\JetEngineBindings::bootstrap();
+
+		// Dynamic Tags subsystem (registry, source catalog, REST, image resolver).
+		require_once DESIGNSETGO_PATH . 'includes/blocks/dynamic-tags/class-dynamic-tags-registry.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/dynamic-tags/class-dynamic-tags-sources-post.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/dynamic-tags/class-dynamic-tags-sources-site.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/dynamic-tags/class-dynamic-tags-sources-archive.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/dynamic-tags/class-dynamic-tags-sources-user.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/dynamic-tags/class-dynamic-tags-field-discovery.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/dynamic-tags/class-dynamic-tags-image-resolver.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/dynamic-tags/class-dynamic-tags-rest.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/dynamic-tags/class-dynamic-tags-bootstrap.php';
+
+		require_once DESIGNSETGO_PATH . 'includes/blocks/class-query-filter-index.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/class-query-filter-index-hooks.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/class-query-filter-index-rebuilder.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/class-query-filter-registry.php';
+
+		if ( defined( 'WP_CLI' ) && WP_CLI ) {
+			require_once DESIGNSETGO_PATH . 'includes/blocks/class-query-filter-index-cli.php';
+			Blocks\Query\FilterIndexCLI::register();
+		}
+
+		// Query Monitor integration — deferred to plugins_loaded so QM has finished
+		// loading regardless of plugin order; the files themselves bail if the QM
+		// base classes still aren't present at the deferred point.
+		add_action(
+			'plugins_loaded',
+			static function () {
+				if ( ! class_exists( '\QM_Collector' ) ) {
+					return;
+				}
+				require_once DESIGNSETGO_PATH . 'includes/class-query-qm-collector.php';
+				require_once DESIGNSETGO_PATH . 'includes/class-query-qm-output.php';
+			},
+			20
+		);
+
 		require_once DESIGNSETGO_PATH . 'includes/patterns/class-loader.php';
 		require_once DESIGNSETGO_PATH . 'includes/admin/class-global-styles.php';
 		require_once DESIGNSETGO_PATH . 'includes/admin/class-settings.php';
+		require_once DESIGNSETGO_PATH . 'includes/admin/class-settings-schema.php';
 		require_once DESIGNSETGO_PATH . 'includes/admin/class-block-manager.php';
 		require_once DESIGNSETGO_PATH . 'includes/admin/class-gdpr-compliance.php';
 		require_once DESIGNSETGO_PATH . 'includes/admin/class-admin-menu.php';
@@ -499,6 +606,7 @@ class Plugin {
 		require_once DESIGNSETGO_PATH . 'includes/admin/class-draft-mode.php';
 		require_once DESIGNSETGO_PATH . 'includes/admin/class-draft-mode-preview.php';
 		require_once DESIGNSETGO_PATH . 'includes/admin/class-block-migrator.php';
+		require_once DESIGNSETGO_PATH . 'includes/admin/class-query-filter-index-admin.php';
 		require_once DESIGNSETGO_PATH . 'includes/class-custom-css-renderer.php';
 		require_once DESIGNSETGO_PATH . 'includes/class-section-styles.php';
 		require_once DESIGNSETGO_PATH . 'includes/class-sticky-header.php';
@@ -506,6 +614,8 @@ class Plugin {
 		require_once DESIGNSETGO_PATH . 'includes/class-icon-injector.php';
 		require_once DESIGNSETGO_PATH . 'includes/class-button-global-styles.php';
 		require_once DESIGNSETGO_PATH . 'includes/class-extension-attributes.php';
+		require_once DESIGNSETGO_PATH . 'includes/class-style-binding.php';
+		require_once DESIGNSETGO_PATH . 'includes/class-block-bindings-support.php';
 		require_once DESIGNSETGO_PATH . 'includes/svg-pattern-data.php';
 		require_once DESIGNSETGO_PATH . 'includes/class-svg-pattern-renderer.php';
 
@@ -514,6 +624,7 @@ class Plugin {
 		require_once DESIGNSETGO_PATH . 'includes/llms-txt/class-generator.php';
 		require_once DESIGNSETGO_PATH . 'includes/llms-txt/class-conflict-detector.php';
 		require_once DESIGNSETGO_PATH . 'includes/llms-txt/class-rest-controller.php';
+		require_once DESIGNSETGO_PATH . 'includes/llms-txt/class-negotiation-handler.php';
 		require_once DESIGNSETGO_PATH . 'includes/llms-txt/class-controller.php';
 
 		// Markdown converter classes.
@@ -551,9 +662,19 @@ class Plugin {
 		$this->assets              = new Assets();
 		$this->blocks              = new Blocks\Loader();
 		$this->extension_attrs     = new Extension_Attributes();
+		$this->style_binding       = new StyleBinding();
+		$this->block_bindings_support = new Block_Bindings_Support();
+		$this->block_bindings_support->register();
 		$this->modal_hooks         = new Blocks\Modal_Hooks();
 		$this->form_handler        = new Blocks\Form_Handler();
 		$this->form_submissions    = new Blocks\Form_Submissions();
+		$this->query_controller          = new Blocks\Query\Controller();
+		add_action( 'rest_api_init', array( 'DesignSetGo\Blocks\Query\Template_Controller', 'register_routes' ) );
+		$this->query_bindings      = new Blocks\Query\Bindings();
+		$this->dynamic_tags        = new Blocks\DynamicTags\Bootstrap();
+		$this->filter_index         = new Blocks\Query\FilterIndex();
+		Blocks\Query\FilterIndexHooks::register_hooks();
+		$this->filter_registry      = new Blocks\Query\FilterRegistry();
 		$this->patterns            = new Patterns\Loader();
 		$this->global_styles       = new Admin\Global_Styles();
 		$this->settings            = new Admin\Settings();
@@ -572,8 +693,9 @@ class Plugin {
 
 		// Initialize admin-only features.
 		if ( is_admin() ) {
-			$this->admin_menu      = new Admin\Admin_Menu();
-			$this->block_migrator  = new Admin\Block_Migrator();
+			$this->admin_menu         = new Admin\Admin_Menu();
+			$this->block_migrator     = new Admin\Block_Migrator();
+			$this->query_filter_index_admin  = new Admin\Query_Filter_Index_Admin();
 		}
 
 		// Initialize draft mode (works on both admin and REST API).
@@ -614,20 +736,49 @@ class Plugin {
 	}
 
 	/**
+	 * Runs any pending database schema upgrades.
+	 *
+	 * Hooked onto admin_init so it only runs in the admin context where
+	 * ABSPATH/wp-admin/includes/upgrade.php is guaranteed to be present.
+	 * Running in the constructor caused phpstan analysis failures because
+	 * FilterIndex::install() requires that file at analysis time.
+	 *
+	 * Compares the stored designsetgo_db_version option against
+	 * DESIGNSETGO_VERSION and installs missing schema when the plugin
+	 * moves past a version that introduced a schema change.
+	 */
+	public function maybe_upgrade(): void {
+		$stored = get_option( 'designsetgo_db_version', '0.0.0' );
+
+		if ( version_compare( $stored, '2.2.0', '<' ) ) {
+			Blocks\Query\FilterIndex::install();
+			// Only seal the upgrade gate after verifying the table actually
+			// exists. Previously the version was bumped unconditionally, so a
+			// silent dbDelta failure (permissions, disk full, early-load order
+			// quirks) left the option at 2.2.0 with no table, and the gate
+			// never retried on subsequent requests.
+			Blocks\Query\FilterIndex::reset_table_cache();
+			if ( Blocks\Query\FilterIndex::table_exists() ) {
+				update_option( 'designsetgo_db_version', '2.2.0', false );
+			}
+		}
+	}
+
+	/**
 	 * Enqueue editor assets.
 	 *
 	 * Note: Block-specific assets are loaded automatically via block.json.
 	 */
 	public function editor_assets() {
-		// Enqueue block category filter to show blocks in multiple categories.
-		$asset_file = DESIGNSETGO_PATH . 'build/block-category-filter.asset.php';
+		// Enqueue the branded SVG icon for the DesignSetGo block category.
+		$asset_file = DESIGNSETGO_PATH . 'build/block-category-icon.asset.php';
 
 		if ( file_exists( $asset_file ) ) {
 			$asset = include $asset_file;
 
 			wp_enqueue_script(
-				'designsetgo-block-category-filter',
-				DESIGNSETGO_URL . 'build/block-category-filter.js',
+				'designsetgo-block-category-icon',
+				DESIGNSETGO_URL . 'build/block-category-icon.js',
 				$asset['dependencies'],
 				$asset['version'],
 				true
@@ -640,7 +791,7 @@ class Plugin {
 			$sticky_settings = wp_parse_args( $sticky_settings, $defaults['sticky_header'] );
 
 			wp_localize_script(
-				'designsetgo-block-category-filter',
+				'designsetgo-block-category-icon',
 				'dsgoStickyHeaderGlobalSettings',
 				array(
 					'enabled' => (bool) $sticky_settings['enable'],
@@ -653,7 +804,7 @@ class Plugin {
 			$integrations_settings = wp_parse_args( $integrations_settings, $integrations_defaults );
 
 			wp_localize_script(
-				'designsetgo-block-category-filter',
+				'designsetgo-block-category-icon',
 				'dsgoIntegrations',
 				array(
 					'googleMapsApiKey'    => ! empty( $integrations_settings['google_maps_api_key'] ) ? esc_js( $integrations_settings['google_maps_api_key'] ) : '',
@@ -694,11 +845,13 @@ class Plugin {
 		}
 
 		// Localize excluded blocks setting for extension filtering.
-		// This is done outside the block-category-filter conditional because
+		// This is done outside the block-category-icon conditional because
 		// the 'designsetgo-extensions' script is registered separately in the Assets class.
 		if ( wp_script_is( 'designsetgo-extensions', 'registered' ) || wp_script_is( 'designsetgo-extensions', 'enqueued' ) ) {
 			$settings        = $settings ?? \DesignSetGo\Admin\Settings::get_settings();
 			$excluded_blocks = isset( $settings['excluded_blocks'] ) ? $settings['excluded_blocks'] : array();
+
+			$enabled_extensions = isset( $settings['enabled_extensions'] ) ? (array) $settings['enabled_extensions'] : array();
 
 			wp_localize_script(
 				'designsetgo-extensions',
@@ -708,6 +861,9 @@ class Plugin {
 					'defaultIconButtonHover' => isset( $settings['animations']['default_icon_button_hover'] )
 						? sanitize_key( $settings['animations']['default_icon_button_hover'] )
 						: 'fill-diagonal',
+					// Empty list = all extensions enabled (matches the
+					// PHP convention in Block_Manager::should_load_extension).
+					'enabledExtensions'      => array_values( array_map( 'sanitize_key', $enabled_extensions ) ),
 				)
 			);
 		}

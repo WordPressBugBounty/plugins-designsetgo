@@ -4,7 +4,7 @@
   "name": "designsetgo/form-phone-field",
   "version": "1.0.0",
   "title": "Phone Field",
-  "category": "design",
+  "category": "designsetgo",
   "description": "A phone number input field for forms.",
   "keywords": [
     "form",
@@ -17,6 +17,7 @@
     "designsetgo/form-builder"
   ],
   "textdomain": "designsetgo",
+  "icon": "phone",
   "supports": {
     "html": false,
     "anchor": false,

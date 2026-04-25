@@ -5,7 +5,7 @@ Tags: blocks, gutenberg, form-builder, animations, responsive
 Requires at least: 6.7
 Tested up to: 6.9
 Requires PHP: 8.0
-Stable tag: 2.0.51
+Stable tag: 2.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -178,6 +178,95 @@ Check the [documentation](https://designsetgoblocks.com/docs/), visit the [suppo
 10. Mobile responsive preview in the editor
 
 == Changelog ==
+
+= 2.1.0 - 2026-04-24 =
+
+**New Blocks**
+* **New:** Dynamic Query — a full-featured query block that iterates Posts, Users, Terms, Manual selections, or the Current archive, with tax_query, meta_query, search, author, date, and offset controls. Renders entirely server-side with an editable template and pluggable sources.
+* **New:** Query Pagination — numbered, load-more, or infinite-scroll pagination variations (infinite scroll uses `IntersectionObserver` and auto-pauses after 3 loads, respecting `prefers-reduced-motion`).
+* **New:** Query Filter — 6 variations (checkbox, select, search, sort, active-filters, reset) with per-option result counts that update as other filters change.
+* **New:** Query No Results — content shown when a query returns zero items.
+* **New:** Query Group Header — renders once per group when group-by is enabled, with `designsetgo/groupLabel` + `designsetgo/groupValue` context for bindings.
+* **New:** Query Results — the child renderer block split out of Dynamic Query so non-grid layout hosts (Slider, Scroll Slides) can take over rendering while sharing the same source and filters.
+
+**Dynamic Tags — bind any block to dynamic data**
+* **New:** Dynamic Tags — an Elementor-style picker on the block toolbar that binds text, titles, URLs, and images to live data (post meta, ACF, Meta Box, Pods, JetEngine, or any custom source). Live preview in the editor, and works on DesignSetGo blocks plus any core block that opts into WordPress 6.9's Block Bindings API.
+* **New:** Native Block Bindings support on DesignSetGo blocks for WordPress 6.9+ — Advanced Heading Segment, Breadcrumbs home/prefix text, and Query Pagination labels are now bindable out of the box.
+* **New:** Third-party field sources for Meta Box, Pods, and JetEngine — formatted dates, files, and relationships render correctly because each source delegates to the host plugin's own formatting API. Each source only registers when its host plugin is active.
+* **New:** DesignSetGo post-meta and ACF binding sources — always available, with an optional `scope` arg (self / parent / root) for nested loops.
+
+**Dynamic Query — filters, grouping, nested loops, and more**
+* **New:** Relationship source — point a Dynamic Query at a relationship field (meta or ACF) and it iterates the referenced posts. Configurable fallback when no IDs are resolved.
+* **New:** Nested loops with parent context — an outer Query's current item flows into inner Queries via a shared parent stack, so bindings in the inner loop can read the outer item's fields via a new `scope` setting (self / parent / root).
+* **New:** Group-by partitioning — split iterated items by taxonomy, meta, or date (year / year-month / year-month-day). Each group is wrapped in its own `<section>` with the new Query Group Header block rendered once per group.
+* **New:** Date Query builder — before / after / between filters with relative expressions (`-30 days`, `today`, ISO dates).
+* **New:** Multi-level AND/OR filter groups in both the Taxonomy and Meta clause builders.
+* **New:** Per-clause "Include children" toggle on taxonomy filters.
+* **New:** Filter index powering sub-millisecond per-option counts on Dynamic Query filters (`(N)` counts next to each option, intersection-aware across multiple active filters).
+* **New:** Settings → DesignSetGo → Dynamic Query admin dashboard — rebuild filter index and manage ad-hoc filter registrations.
+* **New:** WP-CLI commands: `wp dsgo query index rebuild/rebuild-filter/status/drop`.
+* **New:** Editor live preview for Dynamic Query — real posts, users, and terms render in the editor with the first item's template editable.
+* **New:** Template picker onboarding on fresh Dynamic Query inserts (Minimal, Blog Index, Team, Portfolio, Testimonials, Related Posts, Events).
+* **New:** Template export/import as JSON — share a configured Dynamic Query (or template part within one) between sites via REST + inspector buttons.
+* **New:** Query-bound Slider and Scroll Slides — both blocks can now iterate Dynamic Query items as slides, with editor/frontend parity.
+* **New:** Query Monitor integration — when Query Monitor is active, a "DSGo (N)" panel shows per-render query args, found-posts count, duration, and the actual SQL.
+* **New:** CSS-only loading skeletons during filter/pagination refreshes (shown via `aria-busy="true"` state).
+* **New:** ItemList schema.org markup for Posts queries (on by default, togglable per block).
+* **New:** REST endpoints for headless / AJAX consumption — `/designsetgo/v1/query/render`, `/preview`, `/filter-register`, `/filter-status`, `/filter-rebuild`, `/filters`, `/template`.
+
+**Conditional visibility**
+* **New:** Every block now has an Advanced → Visibility panel. Show or hide a block based on meta, taxonomy, the current item's index in a query loop, or whether the visitor is logged in. Combine rules with AND/OR and operators like equals / contains / gt / lt / empty. Editor previews mirror what ships on the frontend.
+
+**Per-URL Markdown**
+* **New:** Per-URL Markdown content negotiation — any published page or post URL returns Markdown when a client sends `Accept: text/markdown`. Passes the [acceptmarkdown.com](https://acceptmarkdown.com/) readiness contract. Respects the llms.txt enablement flag, post-type allowlist, per-page exclusion, and password-protected posts.
+
+**New Extension**
+* **New:** Hover Effects — animated hover interactions that work on any block, including core.
+
+**Editor UX foundations (Themes 1–6)**
+* **Improved:** Unified first-insert placeholder & onboarding across compound blocks (accordion, flip-card, image-accordion, scroll-accordion, slider).
+* **Improved:** Flip Card — front/back child blocks consolidated into a single Flip Card Face block with a side attribute and starter colors.
+* **Improved:** Inspector IA standardized across the library — every block's sidebar uses the same Settings → Style → Advanced panel structure, with per-control reset-to-default.
+* **Improved:** Discoverability polish — block icons, category registration, and naming cleaned up across ~30 blocks.
+* **Improved:** Shared tablist keyboard navigation and child block toolbar (Add / Duplicate / Move / Remove) rolled out to Tabs and Slider.
+
+**Editor UX — new controls and polish**
+* **New:** Grid column toolbar — pick 1–6 columns directly from the Grid block's toolbar (dropdown above 6).
+* **New:** Grid row span — grid children can now span multiple rows alongside the existing column span.
+* **Improved:** Dynamic Image — new inspector layout with a sticky footer, live editor preview, and Select-based controls for every finite-option setting.
+* **Improved:** Form builder now persists the confirmation message across page reloads, so submitters still see the thank-you after a refresh.
+* **Improved:** Distinct titles for taxonomy / meta / date filter panels, visible unchecked checkboxes, optional horizontal orientation, and modern filter inputs that inherit theme.json presets.
+
+**Bug Fixes**
+* **Fix:** Heading Segment default gap is now 0 so adjacent segments read as a single heading.
+* **Fix:** Section clears its default padding automatically when nested inside another Section.
+* **Fix:** Row — inner `flex-direction` flips correctly on mobile stack.
+* **Fix:** Sticky header — smooth logo shrink transition in both scroll directions.
+* **Fix:** Sticky header — a typo in the custom selector setting no longer breaks frontend JavaScript; invalid selectors silently fall back to the default header detection.
+* **Fix:** llms.txt generation now writes reliably on managed hosts (WP Engine, Kinsta, Pantheon) — file writes route through the WordPress filesystem API with a safe fallback.
+* **Fix:** Advanced Heading segment appender restored on the canvas.
+* **Fix:** Inspector panel controls render full-width correctly; Tabs `activeTab` index clamped defensively on editor and frontend.
+* **Fix:** Abilities API add-block output round-tripped through `save()` to prevent block validation failures.
+* **Fix:** Abilities JSON Schema — inline `required:true` migrated to JSON Schema compliant form.
+
+**Security**
+* **Security:** Form submissions — redirect URL normalized and validated before navigation (blocks `javascript:` and other unsafe protocols).
+* **Security:** Draft Mode REST routes now require nonce verification on their permission callbacks.
+* **Security:** Dynamic CSS style bindings block dangerous values (`url(`, `expression(`, `javascript:`) and enforce a property allowlist so bindings can't leak behavioral styles.
+* **Security:** Global Styles values are validated against a CSS-value allowlist before being saved — every functional CSS context (var, calc, clamp, min, max, rgb, hsl) rejects `url(`, `expression(`, and `javascript:` payloads.
+* **Security:** Sticky header custom selector setting rejects HTML angle brackets and known CSS injection patterns (`javascript:`, `expression(`, `url(`, `@import`) before the value reaches the frontend.
+
+**Removed**
+* **Removed:** Visual Revision Comparison — WordPress 7.0 ships native visual diffs for revisions, so the custom admin page, block differ, REST endpoints, and associated settings have been removed.
+
+**Developer**
+* `designsetgo_register_bindings_source( $slug, $callback, $options )` — public helper to register custom binding sources with DSGo's post-password, viewable, protected-meta, and scope gates built in.
+* `designsetgo_resolve_bindings_post_id( $args, $block )` — scope-aware post-ID resolution for callers that use the core binding registration API directly.
+* `designsetgo_visibility_rule` filter — add custom visibility rule types.
+* `designsetgo_query_partition_items( $post_ids, $group_spec )` — public helper for custom group-by integrations.
+* `designsetgo_query_args` + `designsetgo/query/{queryId}/args` — pre-WP_Query filter hooks (scoped or global).
+* `designsetgo_query_registered_filters` — programmatic filter registration for the Dynamic Query filter index.
+* `designsetgo_block_bindings_supported_attributes` — extend native Block Bindings coverage to additional DSGo block attributes.
 
 = 2.0.51 - 2026-04-16 =
 **Editor UX Improvements:**
@@ -771,6 +860,9 @@ Check the [documentation](https://designsetgoblocks.com/docs/), visit the [suppo
 * Comprehensive documentation and developer guides
 
 == Upgrade Notice ==
+
+= 2.1.0 =
+Major update: Dynamic Query block family (list any posts/users/terms with filters, pagination, and faceted counts), Dynamic Tags picker for live data, native WordPress 6.9 Block Bindings, field sources for Meta Box / Pods / JetEngine, conditional block visibility, per-URL Markdown, Hover Effects extension, grid column toolbar + row span, and a full editor UX refresh (standardized inspectors, new onboarding). Security hardening for form redirects, Draft Mode REST endpoints, and CSS style bindings. Visual Revision Comparison removed (WordPress 7.0 ships a native replacement).
 
 = 2.0.33 =
 Fixes form block kses validation failures for select and phone fields, expands phone field to 60+ country codes via JS hydration, adds map geocoding fallback with error handling, and makes Deactivate the primary action in the deactivation modal.

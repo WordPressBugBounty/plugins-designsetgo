@@ -4,7 +4,7 @@
   "name": "designsetgo/form-builder",
   "version": "1.0.0",
   "title": "Form Builder",
-  "category": "widgets",
+  "category": "designsetgo",
   "description": "Create custom forms with multiple field types, AJAX submission, and spam protection.",
   "keywords": [
     "form",
@@ -14,6 +14,7 @@
     "survey"
   ],
   "textdomain": "designsetgo",
+  "icon": "forms",
   "attributes": {
     "formId": {
       "type": "string",

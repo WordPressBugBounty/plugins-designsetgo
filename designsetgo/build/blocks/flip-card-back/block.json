@@ -4,7 +4,7 @@
   "name": "designsetgo/flip-card-back",
   "version": "1.0.0",
   "title": "Flip Card Back",
-  "category": "design",
+  "category": "designsetgo",
   "parent": [
     "designsetgo/flip-card"
   ],
@@ -15,11 +15,12 @@
     "back"
   ],
   "textdomain": "designsetgo",
+  "icon": "id-alt",
   "supports": {
     "anchor": false,
     "align": false,
     "html": false,
-    "inserter": true,
+    "inserter": false,
     "reusable": false,
     "layout": {
       "allowSwitching": false,

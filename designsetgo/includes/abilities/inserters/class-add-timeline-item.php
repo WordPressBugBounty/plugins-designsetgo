@@ -170,7 +170,7 @@ class Add_Timeline_Item extends Abstract_Ability {
 
 		// Find the timeline block.
 		$timeline_found = false;
-		$blocks = $this->add_item_to_timeline(
+		$blocks         = $this->add_item_to_timeline(
 			$blocks,
 			$timeline_client_id,
 			$date,
@@ -196,7 +196,9 @@ class Add_Timeline_Item extends Abstract_Ability {
 		$updated = wp_update_post(
 			array(
 				'ID'           => $post_id,
-				'post_content' => $new_content,
+				// Slash so wp_update_post()'s internal wp_unslash() doesn't strip
+				// JSON-escape backslashes from block-comment attributes.
+				'post_content' => wp_slash( $new_content ),
 			),
 			true
 		);

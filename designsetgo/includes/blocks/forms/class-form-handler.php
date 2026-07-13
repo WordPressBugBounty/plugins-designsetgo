@@ -173,7 +173,7 @@ class Form_Handler {
 				'callback'            => array( $this, 'handle_form_submission' ),
 				'permission_callback' => '__return_true', // Public endpoint - see DocBlock above for security measures.
 				'args'                => array(
-					'formId'           => array(
+					'formId'          => array(
 						'required'          => true,
 						'type'              => 'string',
 						'sanitize_callback' => 'sanitize_text_field',
@@ -181,24 +181,24 @@ class Form_Handler {
 							return is_string( $param ) && ! empty( $param );
 						},
 					),
-					'fields'           => array(
+					'fields'          => array(
 						'required'          => true,
 						'type'              => 'array',
 						'validate_callback' => function ( $param ) {
 							return is_array( $param );
 						},
 					),
-					'honeypot'         => array(
+					'honeypot'        => array(
 						'required' => false,
 						'type'     => 'string',
 						'default'  => '',
 					),
-					'timestamp'        => array(
+					'timestamp'       => array(
 						'required' => false,
 						'type'     => 'string',
 						'default'  => '',
 					),
-					'turnstile_token'  => array(
+					'turnstile_token' => array(
 						'type'              => 'string',
 						'default'           => '',
 						'sanitize_callback' => 'sanitize_text_field',
@@ -260,9 +260,9 @@ class Form_Handler {
 		// Fallback (2/60s) is intentionally stricter than the block-level default
 		// — it only applies to orphaned/legacy submissions where the per-block
 		// configuration is missing.
-		$block_attrs      = $this->get_form_block_attributes( $form_id );
-		$rate_limit_count = isset( $block_attrs['rateLimitCount'] ) ? absint( $block_attrs['rateLimitCount'] ) : 2;
-		$rate_limit_window = isset( $block_attrs['rateLimitWindow'] ) ? absint( $block_attrs['rateLimitWindow'] ) : 60;
+		$block_attrs        = $this->get_form_block_attributes( $form_id );
+		$rate_limit_count   = isset( $block_attrs['rateLimitCount'] ) ? absint( $block_attrs['rateLimitCount'] ) : 2;
+		$rate_limit_window  = isset( $block_attrs['rateLimitWindow'] ) ? absint( $block_attrs['rateLimitWindow'] ) : 60;
 		$turnstile_required = ! empty( $block_attrs['enableTurnstile'] );
 
 		// Honeypot spam check (only if enabled in settings).
@@ -323,10 +323,10 @@ class Form_Handler {
 				continue;
 			}
 
-			$field_name          = sanitize_text_field( $field['name'] );
-			$field_value         = $field['value'];
+			$field_name           = sanitize_text_field( $field['name'] );
+			$field_value          = $field['value'];
 			$submitted_field_type = isset( $field['type'] ) ? sanitize_text_field( $field['type'] ) : 'text';
-			$field_type          = isset( $form_field_types[ $field_name ] )
+			$field_type           = isset( $form_field_types[ $field_name ] )
 				? $form_field_types[ $field_name ]
 				: $submitted_field_type;
 
@@ -657,11 +657,19 @@ class Form_Handler {
 		}
 
 		// Store form data as post meta.
+		//
+		// update_metadata() runs wp_unslash() on every value it stores, so it expects
+		// SLASHED input. Everything below has already been unslashed (REST params
+		// arrive unslashed; the no-JS $_POST path unslashes explicitly), so passing
+		// these straight through would strip one level of escaping and silently eat
+		// backslashes out of submitted content — "C:\Users\me" would land as
+		// "C:Usersme". Re-slash the user-controlled values to survive that unslash.
+		// wp_slash() walks arrays, so $fields is covered in full.
 		update_post_meta( $post_id, '_dsg_form_id', $form_id );
-		update_post_meta( $post_id, '_dsg_form_fields', $fields );
+		update_post_meta( $post_id, '_dsg_form_fields', wp_slash( $fields ) );
 		update_post_meta( $post_id, '_dsg_submission_ip', $this->security->get_client_ip() );
-		update_post_meta( $post_id, '_dsg_submission_user_agent', $this->get_user_agent() );
-		update_post_meta( $post_id, '_dsg_submission_referer', wp_get_referer() );
+		update_post_meta( $post_id, '_dsg_submission_user_agent', wp_slash( $this->get_user_agent() ) );
+		update_post_meta( $post_id, '_dsg_submission_referer', wp_slash( wp_get_referer() ) );
 		update_post_meta( $post_id, '_dsg_submission_date', current_time( 'mysql' ) );
 
 		// Clear cached form submission count.
@@ -721,6 +729,53 @@ class Form_Handler {
 	}
 
 	/**
+	 * Flatten a submitted field to a string.
+	 *
+	 * A field arrives either as a bare scalar or as `array( 'value' => … )`, and
+	 * that value is itself an array for a multi-value field (checkbox group,
+	 * multi-select) — which esc_html() would raise on.
+	 *
+	 * The whole point of this helper is that EVERY shape is safe to stringify, so
+	 * it must not assume the shape it is handed. A submission is attacker-shaped
+	 * data: an array with no `value` key, or one nesting arrays inside arrays,
+	 * would make a plain strval() emit an "Array to string conversion" warning.
+	 * Flattening recurses instead.
+	 *
+	 * @param mixed $field_data Raw submitted field.
+	 * @return string Flattened value.
+	 */
+	private static function stringify_field_value( $field_data ) {
+		$value = ( is_array( $field_data ) && array_key_exists( 'value', $field_data ) )
+			? $field_data['value']
+			: $field_data;
+
+		return self::flatten_value( $value );
+	}
+
+	/**
+	 * Recursively reduce any value to a display string.
+	 *
+	 * @param mixed $value Value of arbitrary shape.
+	 * @return string Flattened value.
+	 */
+	private static function flatten_value( $value ) {
+		if ( is_array( $value ) ) {
+			return implode( ', ', array_map( array( self::class, 'flatten_value' ), $value ) );
+		}
+
+		if ( is_bool( $value ) ) {
+			return $value ? '1' : '';
+		}
+
+		if ( null === $value || is_scalar( $value ) ) {
+			return (string) $value;
+		}
+
+		// Objects/resources have no meaningful representation in an email.
+		return '';
+	}
+
+	/**
 	 * Send email notification with form submission data.
 	 *
 	 * Email configuration is read from the server-side block attributes (stored
@@ -753,7 +808,7 @@ class Form_Handler {
 		$email_body      = isset( $block_attrs['emailBody'] ) ? $block_attrs['emailBody'] : '';
 		// emailReplyTo is a field NAME reference (e.g., "email"), not an email address.
 		// The actual email value is extracted from submitted fields and sanitized below (line ~650).
-		$email_reply_to  = isset( $block_attrs['emailReplyTo'] ) ? $block_attrs['emailReplyTo'] : '';
+		$email_reply_to = isset( $block_attrs['emailReplyTo'] ) ? $block_attrs['emailReplyTo'] : '';
 
 		// Strip newlines from header-used values to prevent injection (defense in depth).
 		$newline_chars   = array( "\r", "\n", '%0a', '%0d' );
@@ -820,27 +875,74 @@ class Form_Handler {
 			);
 		}
 
-		$merge_tags = array(
-			'{form_id}'       => $form_id,
-			'{submission_id}' => $submission_id,
-			'{page_url}'      => $current_url,
-			'{site_name}'     => get_bloginfo( 'name' ),
-			'{date}'          => current_time( 'mysql' ),
+		/*
+		 * Merge tags land in TWO places with different rules, so they need two
+		 * maps. Sharing one is what made the first cut of this fix wrong.
+		 *
+		 * BODY is HTML (`Content-Type: text/html`), so values MUST be esc_html()'d
+		 * or a submitter puts arbitrary markup in the owner's inbox.
+		 *
+		 * SUBJECT is a plain-text mail header. It is never parsed as markup, so
+		 * escaping it is not protection, it is corruption: a site named
+		 * "Bob's Bakery & Sons" would arrive as "Bob&#039;s Bakery &amp; Sons".
+		 * What the subject actually needs is newline stripping, or a submitted
+		 * value could inject a second mail header.
+		 *
+		 * The subject is a documented merge-tag target ("Use {field_name} for
+		 * dynamic values" in the Form Builder inspector), so this is a real
+		 * authoring surface, not a theoretical one.
+		 */
+		// WordPress stores `blogname` ALREADY HTML-escaped — sanitize_option() runs
+		// esc_html() on save — so get_bloginfo('name') hands back
+		// `Bob&#039;s Bakery &amp; Sons`. Decoding it here is what makes these
+		// genuinely raw values, and is the same thing core does when it puts the
+		// site name into an email (see wp_new_user_notification()). The body map
+		// re-escapes it below; the subject, being plain text, wants it as typed.
+		$raw_values = array(
+			'{form_id}'       => (string) $form_id,
+			'{submission_id}' => (string) $submission_id,
+			'{page_url}'      => (string) $current_url,
+			'{site_name}'     => wp_specialchars_decode( (string) get_bloginfo( 'name' ), ENT_QUOTES ),
+			'{date}'          => (string) current_time( 'mysql' ),
 		);
 
-		// Add field values to merge tags.
 		foreach ( $fields as $field_name => $field_data ) {
-			$merge_tags[ '{' . $field_name . '}' ] = is_array( $field_data ) ? $field_data['value'] : $field_data;
+			$raw_values[ '{' . $field_name . '}' ] = self::stringify_field_value( $field_data );
 		}
 
-		// Build all_fields list.
+		// The {all_fields} summary is markup by construction, so it is built once
+		// per context rather than escaped generically: HTML for the body, and a
+		// flat one-liner for the subject (where tags would be nonsense).
 		$all_fields_html = '';
+		$all_fields_text = array();
 		foreach ( $fields as $field_name => $field_data ) {
-			$value            = is_array( $field_data ) ? $field_data['value'] : $field_data;
-			$label            = ucwords( str_replace( array( '_', '-' ), ' ', $field_name ) );
-			$all_fields_html .= sprintf( "<strong>%s:</strong> %s<br>\n", esc_html( $label ), esc_html( $value ) );
+			$value = self::stringify_field_value( $field_data );
+			$label = ucwords( str_replace( array( '_', '-' ), ' ', $field_name ) );
+
+			$all_fields_html  .= sprintf( "<strong>%s:</strong> %s<br>\n", esc_html( $label ), esc_html( $value ) );
+			$all_fields_text[] = $label . ': ' . $value;
 		}
-		$merge_tags['{all_fields}'] = $all_fields_html;
+
+		// Body: escape every value. {all_fields} is already escaped internally.
+		$body_tags                 = array_map( 'esc_html', $raw_values );
+		$body_tags['{all_fields}'] = $all_fields_html;
+
+		// Subject: do NOT escape. Strip newlines so a submitted value cannot
+		// smuggle in an extra mail header (PHPMailer would also catch this, but
+		// the intent belongs here rather than depending on a downstream library).
+		// The `%0a`/`%0d` literals mirror the header-injection strip at the top of
+		// this method: a value can arrive percent-encoded from a source that was
+		// not URL-decoded, and stripping both forms is cheaper than proving no
+		// such path exists. The trade-off — a subject legitimately containing the
+		// text "%0a" loses it — is negligible against a header-injection strip.
+		$newlines                     = array( "\r", "\n", '%0a', '%0d' );
+		$subject_tags                 = array_map(
+			static function ( $value ) use ( $newlines ) {
+				return str_replace( $newlines, ' ', $value );
+			},
+			$raw_values
+		);
+		$subject_tags['{all_fields}'] = str_replace( $newlines, ' ', implode( '; ', $all_fields_text ) );
 
 		// Default email body if empty.
 		if ( empty( $email_body ) ) {
@@ -849,9 +951,9 @@ class Form_Handler {
 			$email_body = sanitize_textarea_field( $email_body );
 		}
 
-		// Replace merge tags in subject and body.
-		$email_subject = str_replace( array_keys( $merge_tags ), array_values( $merge_tags ), $email_subject );
-		$email_body    = str_replace( array_keys( $merge_tags ), array_values( $merge_tags ), $email_body );
+		// Replace merge tags — each context with its own map (see above).
+		$email_subject = str_replace( array_keys( $subject_tags ), array_values( $subject_tags ), $email_subject );
+		$email_body    = str_replace( array_keys( $body_tags ), array_values( $body_tags ), $email_body );
 
 		// Convert line breaks to <br> for HTML email.
 		$email_body = nl2br( $email_body );
@@ -864,7 +966,11 @@ class Form_Handler {
 
 		// Add Reply-To if specified and field exists.
 		if ( ! empty( $email_reply_to ) && isset( $fields[ $email_reply_to ] ) ) {
-			$reply_to_value = is_array( $fields[ $email_reply_to ] ) ? $fields[ $email_reply_to ]['value'] : $fields[ $email_reply_to ];
+			// Flatten through the shared helper: a multi-value field yields an
+			// array, and handing that to str_replace()/sanitize_email() below is a
+			// PHP 8 TypeError (strlen() on an array) that would take down the whole
+			// notification. self::stringify_field_value() guarantees a string.
+			$reply_to_value = self::stringify_field_value( $fields[ $email_reply_to ] );
 
 			// Strip newlines to prevent email header injection.
 			$reply_to_value = str_replace( array( "\r", "\n", '%0a', '%0d' ), '', $reply_to_value );

@@ -78,11 +78,15 @@ class Block_Inserter {
 		// Serialize blocks back to content.
 		$content = serialize_blocks( $blocks );
 
-		// Update post.
+		// Update post. wp_update_post() runs wp_unslash() on every field, which
+		// would strip the JSON-escape backslashes serialize_blocks() writes into
+		// block-comment attributes (\n, \", \\, \uXXXX). Slash first so the stored
+		// content is byte-identical to what we serialized — critical now that
+		// dynamic blocks carry their text in attributes rather than innerHTML.
 		$updated = wp_update_post(
 			array(
 				'ID'           => $post->ID,
-				'post_content' => $content,
+				'post_content' => wp_slash( $content ),
 			),
 			true
 		);
@@ -185,15 +189,10 @@ class Block_Inserter {
 			}
 		}
 
-		// Generate HTML for standalone DesignSetGo blocks (form fields, etc.).
-		// Only runs if wrapper HTML was not generated above.
-		if ( 0 === strpos( $block_name, 'designsetgo/' ) && empty( $inner_blocks ) && empty( $innerHTML ) && ! self::is_dynamic_block( $block_name ) ) {
-			$block_html = self::generate_designsetgo_block_html( $block_name, $attrs );
-			if ( ! empty( $block_html ) ) {
-				$innerHTML      = $block_html;
-				$innerContent[] = $block_html;
-			}
-		}
+		// Form-field blocks (and the map) are dynamic/server-rendered, so they
+		// serialize to a bare self-closing comment with no inner HTML — nothing
+		// to build here. is_dynamic_block() above keeps them out of the
+		// wrapper-HTML path too.
 
 		// Strip attributes that match block.json defaults so serialize_block
 		// doesn't include them in the block comment (WordPress omits defaults).
@@ -433,7 +432,10 @@ class Block_Inserter {
 				$flip_duration  = isset( $attributes['flipDuration'] ) ? $attributes['flipDuration'] : '0.6s';
 
 				$outer_class = 'wp-block-designsetgo-flip-card dsgo-flip-card dsgo-flip-card--' . esc_attr( $flip_trigger ) . ' dsgo-flip-card--effect-' . esc_attr( $flip_effect ) . ' dsgo-flip-card--' . esc_attr( $flip_direction );
-				$outer_style = '--dsgo-flip-duration:' . esc_attr( $flip_duration ) . ';width:100%';
+				// `width:100%` is no longer serialized — style.scss owns it (see
+				// save.js). Emitting it here would produce markup save() never
+				// generates, so the block would fail validation on first open.
+				$outer_style = '--dsgo-flip-duration:' . esc_attr( $flip_duration );
 				$data_attrs  = ' data-flip-trigger="' . esc_attr( $flip_trigger ) . '" data-flip-effect="' . esc_attr( $flip_effect ) . '" data-flip-direction="' . esc_attr( $flip_direction ) . '"';
 
 				return array(
@@ -464,11 +466,26 @@ class Block_Inserter {
 				);
 
 			case 'designsetgo/icon':
+				// Dead branch: Icon is a dynamic block (render.php), so
+				// is_dynamic_block() keeps this switch from ever being
+				// reached for it (see convert_to_block_array() above) — the
+				// block always serializes to a bare comment and is rendered
+				// server-side. Kept in sync with the current markup anyway
+				// (rather than deleted) in case that gate is ever revisited;
+				// same treatment as the Pill case below.
 				$icon_name    = isset( $attributes['icon'] ) ? $attributes['icon'] : ( isset( $attributes['iconName'] ) ? $attributes['iconName'] : 'star' );
 				$icon_style   = isset( $attributes['iconStyle'] ) ? $attributes['iconStyle'] : 'filled';
 				$stroke_width = isset( $attributes['strokeWidth'] ) ? $attributes['strokeWidth'] : '1.5';
 				$icon_size    = isset( $attributes['iconSize'] ) ? intval( $attributes['iconSize'] ) : ( isset( $attributes['size'] ) ? intval( $attributes['size'] ) : 48 );
 				$aria_label   = isset( $attributes['ariaLabel'] ) ? $attributes['ariaLabel'] : ucwords( str_replace( '-', ' ', $icon_name ) );
+
+				// `align` was removed when `justification` replaced it.
+				$justification = isset( $attributes['justification'] )
+					? $attributes['justification']
+					: ( isset( $attributes['align'] ) ? $attributes['align'] : 'center' );
+				if ( ! in_array( $justification, array( 'left', 'center', 'right' ), true ) ) {
+					$justification = 'center';
+				}
 
 				$wrapper_style = 'width:' . $icon_size . 'px;height:' . $icon_size . 'px;display:inline-flex;align-items:center;justify-content:center;border-radius:inherit';
 
@@ -478,8 +495,10 @@ class Block_Inserter {
 				$inner_html .= ' data-icon-stroke-width="' . esc_attr( $stroke_width ) . '"';
 				$inner_html .= ' role="img" aria-label="' . esc_attr( $aria_label ) . '"></div>';
 
+				$wrapper_class = 'wp-block-designsetgo-icon dsgo-icon dsgo-justify dsgo-justify--' . $justification;
+
 				return array(
-					'opening' => '<div class="wp-block-designsetgo-icon dsgo-icon" style="display:flex;align-items:center;justify-content:center">' . $inner_html,
+					'opening' => '<div class="' . esc_attr( $wrapper_class ) . '">' . $inner_html,
 					'closing' => '</div>',
 				);
 
@@ -722,7 +741,11 @@ class Block_Inserter {
 				$outer_class     = 'wp-block-designsetgo-countdown-timer dsgo-countdown-timer dsgo-countdown-timer--' . esc_attr( $layout );
 
 				$inner_html  = '<div class="dsgo-countdown-timer__units">' . $units_html . '</div>';
-				$inner_html .= '<div class="dsgo-countdown-timer__completion-message" style="display:none">' . esc_html( $completion_message ) . '</div>';
+				// No inline display:none — style.scss hides this by default (view.js
+				// reveals it by setting an inline display:block, which wins either
+				// way). save.js stopped serializing it, so emitting it here would
+				// produce markup save() never generates and fail validation.
+				$inner_html .= '<div class="dsgo-countdown-timer__completion-message">' . esc_html( $completion_message ) . '</div>';
 
 				return array(
 					'opening' => '<div class="' . esc_attr( $outer_class ) . '" style="' . esc_attr( $container_style ) . '"' . $data_attrs . '>' . $inner_html,
@@ -779,16 +802,24 @@ class Block_Inserter {
 				);
 
 			case 'designsetgo/pill':
-				$content = isset( $attributes['content'] ) ? $attributes['content'] : '';
-				$align   = isset( $attributes['align'] ) ? $attributes['align'] : 'center';
-
-				// Build class list matching useBlockProps.save output.
-				$class_parts = array( 'wp-block-designsetgo-pill' );
-				if ( $align ) {
-					$class_parts[] = 'align' . $align;
+				// Dead branch: Pill is a dynamic block (render.php), so
+				// is_dynamic_block() keeps this switch from ever being
+				// reached for it (see convert_to_block_array() above) — the
+				// block always serializes to a bare comment and is rendered
+				// server-side. Kept in sync with the current markup anyway
+				// (rather than deleted) in case that gate is ever revisited;
+				// `align` was removed when `justification` replaced it, and
+				// the pre-dynamic `wp-block-designsetgo-pill align{value}
+				// dsgo-pill has-small-font-size` shape below is stale.
+				$content       = isset( $attributes['content'] ) ? $attributes['content'] : '';
+				$justification = isset( $attributes['justification'] )
+					? $attributes['justification']
+					: ( isset( $attributes['align'] ) ? $attributes['align'] : 'center' );
+				if ( ! in_array( $justification, array( 'left', 'center', 'right' ), true ) ) {
+					$justification = 'center';
 				}
-				$class_parts[] = 'dsgo-pill';
-				$class_parts[] = 'has-small-font-size';
+
+				$class_parts = array( 'wp-block-designsetgo-pill', 'dsgo-pill', 'dsgo-justify', 'dsgo-justify--' . $justification );
 
 				$inner_html = '<span class="dsgo-pill__content">' . wp_kses_post( $content ) . '</span>';
 
@@ -804,7 +835,18 @@ class Block_Inserter {
 				$zoom               = isset( $attributes['dsgoZoom'] ) ? intval( $attributes['dsgoZoom'] ) : 13;
 				$address            = isset( $attributes['dsgoAddress'] ) ? $attributes['dsgoAddress'] : '';
 				$marker_icon        = isset( $attributes['dsgoMarkerIcon'] ) ? $attributes['dsgoMarkerIcon'] : '📍';
-				$marker_color       = isset( $attributes['dsgoMarkerColor'] ) ? $attributes['dsgoMarkerColor'] : '#e74c3c';
+				// Treat an unset OR explicitly-cleared ('') marker color as the
+				// block default, mirroring render.php — the editor now stores ''
+				// on clear, and the resolver short-circuits empty strings before
+				// consulting its own fallback.
+				$marker_color       = ( isset( $attributes['dsgoMarkerColor'] ) && '' !== $attributes['dsgoMarkerColor'] )
+					? $attributes['dsgoMarkerColor']
+					: '#e74c3c';
+				// Resolve theme palette presets (var:preset|color|{slug}) to a
+				// concrete color; the marker is drawn by view.js, which cannot
+				// inherit the page's CSS custom properties. Fall back to the block
+				// default when the preset's slug is missing from the palette.
+				$marker_color       = designsetgo_resolve_preset_color( $marker_color, '#e74c3c' );
 				$height             = isset( $attributes['dsgoHeight'] ) ? $attributes['dsgoHeight'] : '400px';
 				$aspect_ratio       = isset( $attributes['dsgoAspectRatio'] ) ? $attributes['dsgoAspectRatio'] : 'custom';
 				$privacy_mode       = isset( $attributes['dsgoPrivacyMode'] ) ? $attributes['dsgoPrivacyMode'] : false;
@@ -979,42 +1021,45 @@ class Block_Inserter {
 				);
 
 			case 'designsetgo/icon-list-item':
-				$icon        = isset( $attributes['icon'] ) ? $attributes['icon'] : 'star';
-				$link_url    = isset( $attributes['linkUrl'] ) ? $attributes['linkUrl'] : '';
-				$link_target = isset( $attributes['linkTarget'] ) ? $attributes['linkTarget'] : '';
+				$icon     = isset( $attributes['icon'] ) ? $attributes['icon'] : 'star';
+				$link_url = isset( $attributes['linkUrl'] ) ? $attributes['linkUrl'] : '';
+				// Same as icon-button below: block.json defaults linkTarget to
+				// `_self`, so save() always emits target alongside href. Defaulting
+				// to '' here suppressed it and linked items failed validation.
+				$link_target = isset( $attributes['linkTarget'] ) && '' !== $attributes['linkTarget']
+					? $attributes['linkTarget']
+					: '_self';
 				$link_rel    = isset( $attributes['linkRel'] ) ? $attributes['linkRel'] : '';
-				$content_gap = isset( $attributes['contentGap'] ) ? intval( $attributes['contentGap'] ) : 8;
-				// These values typically come from parent block context, read from attributes if provided.
-				$icon_size     = isset( $attributes['iconSize'] ) ? intval( $attributes['iconSize'] ) : 32;
-				$icon_position = isset( $attributes['iconPosition'] ) ? $attributes['iconPosition'] : 'left';
 
-				// Calculate text alignment.
-				$text_align = 'left';
-				if ( 'top' === $icon_position ) {
-					$text_align = 'center';
-				} elseif ( 'right' === $icon_position ) {
-					$text_align = 'right';
+				// Everything below must reproduce save.js's output for an
+				// EMPTY block context, because that is the only output that
+				// exists in stored markup: WordPress does not pass block context
+				// to save(), so the parent Icon List's iconSize / iconPosition /
+				// colours resolve to their defaults there and the item inherits
+				// them from CSS at render time instead.
+				//
+				// Concretely that means: icon-left, no inline icon size (the
+				// `--inherit-size` class hands sizing to the theme token), no
+				// item gap, and the icon box's layout coming from style.scss.
+				// Reading iconSize / iconPosition off $attributes here — as this
+				// branch used to — produced markup save() never generates, so an
+				// AI-inserted item failed validation the first time it was opened.
+				// row / flex-start / left are save.js's empty-context values, not
+				// choices made here — hence the literals rather than variables.
+				$item_style = 'display:flex;flex-direction:row;align-items:flex-start';
+
+				// Content gap: written inline only for an explicit author value,
+				// mirroring save.js (the attribute has no default).
+				$content_style = 'text-align:left;display:flex;flex-direction:column';
+				if ( isset( $attributes['contentGap'] ) && is_numeric( $attributes['contentGap'] ) ) {
+					$content_style .= ';gap:' . intval( $attributes['contentGap'] ) . 'px';
 				}
 
-				// Item styles.
-				$flex_direction = 'top' === $icon_position ? 'column' : 'row';
-				if ( 'right' === $icon_position ) {
-					$flex_direction = 'row-reverse';
-				}
-				$item_align = 'top' === $icon_position ? 'center' : 'flex-start';
-				$item_gap   = 'top' === $icon_position ? '12px' : '16px';
-				$item_style = 'display:flex;flex-direction:' . $flex_direction . ';align-items:' . $item_align . ';gap:' . $item_gap;
+				$outer_class = 'wp-block-designsetgo-icon-list-item dsgo-icon-list-item dsgo-icon-list-item--icon-left';
 
-				// Icon wrapper styles.
-				$icon_style = 'display:flex;align-items:center;justify-content:center;width:' . $icon_size . 'px;height:' . $icon_size . 'px;min-width:' . $icon_size . 'px';
-
-				// Content styles.
-				$content_style = 'text-align:' . $text_align . ';display:flex;flex-direction:column;gap:' . $content_gap . 'px';
-
-				$outer_class = 'wp-block-designsetgo-icon-list-item dsgo-icon-list-item dsgo-icon-list-item--icon-' . esc_attr( $icon_position );
-
-				// Build icon HTML.
-				$icon_html = '<div class="dsgo-icon-list-item__icon dsgo-lazy-icon" style="' . esc_attr( $icon_style ) . '" data-icon-name="' . esc_attr( $icon ) . '"></div>';
+				// No inline style on the icon box: layout lives in style.scss and
+				// size resolves from --dsgo-icon-list-size via the inherit-size class.
+				$icon_html = '<div class="dsgo-icon-list-item__icon dsgo-lazy-icon dsgo-icon-list-item__icon--inherit-size" data-icon-name="' . esc_attr( $icon ) . '"></div>';
 
 				// Build element (div or link).
 				$tag         = $link_url ? 'a' : 'div';
@@ -1035,43 +1080,100 @@ class Block_Inserter {
 				);
 
 			case 'designsetgo/icon-button':
-				$text           = isset( $attributes['text'] ) ? $attributes['text'] : '';
-				$url            = isset( $attributes['url'] ) ? $attributes['url'] : '';
-				$link_target    = isset( $attributes['linkTarget'] ) ? $attributes['linkTarget'] : '';
-				$rel            = isset( $attributes['rel'] ) ? $attributes['rel'] : '';
+				$text = isset( $attributes['text'] ) ? $attributes['text'] : '';
+				$url  = isset( $attributes['url'] ) ? $attributes['url'] : '';
+				// `_self`, not '', is block.json's default for linkTarget — so a
+				// parsed block always has one and save() always emits
+				// target="_self" alongside href. Defaulting to '' here suppressed
+				// the attribute and every AI-inserted LINKED icon button failed
+				// validation on first open.
+				$link_target = isset( $attributes['linkTarget'] ) && '' !== $attributes['linkTarget']
+					? $attributes['linkTarget']
+					: '_self';
+				$rel         = isset( $attributes['rel'] ) ? $attributes['rel'] : '';
 				$icon           = isset( $attributes['icon'] ) ? $attributes['icon'] : 'lightbulb';
 				$icon_position  = isset( $attributes['iconPosition'] ) ? $attributes['iconPosition'] : 'start';
 				$icon_size      = isset( $attributes['iconSize'] ) ? intval( $attributes['iconSize'] ) : 20;
-				$icon_gap       = isset( $attributes['iconGap'] ) ? $attributes['iconGap'] : '8px';
-				$align          = isset( $attributes['align'] ) ? $attributes['align'] : '';
+				$icon_gap       = isset( $attributes['iconGap'] ) ? $attributes['iconGap'] : '';
 				$hover_anim     = isset( $attributes['hoverAnimation'] ) ? $attributes['hoverAnimation'] : 'none';
 				$modal_close_id = isset( $attributes['modalCloseId'] ) ? $attributes['modalCloseId'] : '';
 
-				// Build classes.
-				$class_parts = array( 'wp-block-designsetgo-icon-button', 'dsgo-icon-button', 'wp-block-button', 'wp-block-button__link', 'wp-element-button' );
+				// save.js omits data-icon-style / data-icon-stroke-width unless
+				// the author sets them, so mirror that here. Both are validated
+				// against block.json rather than passed through: callers of this
+				// Ability are AI agents, so an out-of-enum iconStyle would emit a
+				// data-icon-style the frontend injector doesn't understand, and a
+				// non-scalar strokeWidth would stringify to "Array" (and warn).
+				$icon_style_attr = '';
+				if ( isset( $attributes['iconStyle'] ) && in_array( $attributes['iconStyle'], array( 'filled', 'outlined' ), true ) ) {
+					$icon_style_attr = $attributes['iconStyle'];
+				}
+				$stroke_width = ( isset( $attributes['strokeWidth'] ) && is_numeric( $attributes['strokeWidth'] ) )
+					? (float) $attributes['strokeWidth']
+					: 1.5;
+
+				// Read the current `justification`/`fullWidth` attributes; fall
+				// back to the legacy `align` for callers that still pass it.
+				$justification = isset( $attributes['justification'] )
+					? $attributes['justification']
+					: ( isset( $attributes['align'] ) ? $attributes['align'] : 'left' );
+				if ( ! in_array( $justification, array( 'left', 'center', 'right' ), true ) ) {
+					$justification = 'left';
+				}
+				$full_width = ! empty( $attributes['fullWidth'] ) || ( isset( $attributes['align'] ) && 'full' === $attributes['align'] );
+
+				$has_icon = 'none' !== $icon_position && $icon;
+
+				// Build the button's own classes (matches the current save.js
+				// marker-class scheme: gap is themed via `--has-icon`, not baked
+				// inline, unless the author sets an explicit iconGap).
+				$class_parts = array( 'dsgo-icon-button', 'wp-block-button', 'wp-block-button__link', 'wp-element-button' );
+				if ( $has_icon ) {
+					$class_parts[] = 'dsgo-icon-button--has-icon';
+				}
+				if ( $full_width ) {
+					$class_parts[] = 'dsgo-icon-button--full-width';
+				}
+				if ( 'end' === $icon_position ) {
+					$class_parts[] = 'dsgo-icon-button--icon-end';
+				}
 				if ( $hover_anim && 'none' !== $hover_anim ) {
 					$class_parts[] = 'dsgo-icon-button--' . $hover_anim;
 				}
 
-				// Build button styles.
-				$is_full_width  = 'full' === $align;
-				$flex_direction = 'end' === $icon_position ? 'row-reverse' : 'row';
-				$gap_value      = ( 'none' !== $icon_position && $icon ) ? $icon_gap : '0';
-				$style_parts    = array(
-					'display:' . ( $is_full_width ? 'flex' : 'inline-flex' ),
-					'align-items:center',
-					'justify-content:center',
-					'gap:' . esc_attr( $gap_value ),
-					'width:' . ( $is_full_width ? '100%' : 'auto' ),
-					'flex-direction:' . $flex_direction,
-				);
-				$button_style   = implode( ';', $style_parts );
+				// Layout (display/width/flex-direction) lives in style.scss now,
+				// not inline — only an explicit author gap is written inline.
+				$style_parts = array();
+				if ( $has_icon && '' !== $icon_gap ) {
+					$style_parts[] = 'gap:' . esc_attr( $icon_gap );
+				}
+				$button_style = implode( ';', $style_parts );
 
-				// Icon HTML.
+				// Icon HTML. Must match save.js: the icon span's layout
+				// (display/align-items/justify-content/flex-shrink) lives in
+				// style.scss, and width/height + data-icon-size are written ONLY
+				// when the caller sets an explicit numeric iconSize — otherwise
+				// the theme size token owns it. Emitting them unconditionally
+				// (as this did) produced markup save() would never generate, so
+				// the block validator flagged AI-inserted buttons as invalid.
 				$icon_html = '';
-				if ( 'none' !== $icon_position && $icon ) {
-					$icon_style = 'display:flex;align-items:center;justify-content:center;width:' . $icon_size . 'px;height:' . $icon_size . 'px;flex-shrink:0';
-					$icon_html  = '<span class="dsgo-icon-button__icon dsgo-lazy-icon" style="' . esc_attr( $icon_style ) . '" data-icon-name="' . esc_attr( $icon ) . '" data-icon-size="' . esc_attr( (string) $icon_size ) . '"></span>';
+				if ( $has_icon ) {
+					$has_explicit_size = isset( $attributes['iconSize'] ) && is_numeric( $attributes['iconSize'] );
+					$icon_attrs        = '';
+					if ( $has_explicit_size ) {
+						$icon_attrs .= ' style="' . esc_attr( 'width:' . $icon_size . 'px;height:' . $icon_size . 'px' ) . '"';
+					}
+					$icon_attrs .= ' data-icon-name="' . esc_attr( $icon ) . '"';
+					if ( $has_explicit_size ) {
+						$icon_attrs .= ' data-icon-size="' . esc_attr( (string) $icon_size ) . '"';
+					}
+					if ( $icon_style_attr ) {
+						$icon_attrs .= ' data-icon-style="' . esc_attr( $icon_style_attr ) . '"';
+					}
+					if ( 'outlined' === $icon_style_attr ) {
+						$icon_attrs .= ' data-icon-stroke-width="' . esc_attr( (string) $stroke_width ) . '"';
+					}
+					$icon_html = '<span class="dsgo-icon-button__icon dsgo-lazy-icon"' . $icon_attrs . '></span>';
 				}
 
 				// Text HTML.
@@ -1100,9 +1202,16 @@ class Block_Inserter {
 
 				$inner_html = $icon_html . $text_html;
 
+				// The block root is a block-level justification wrapper — core's
+				// constrained layout caps IT at the content column — with the
+				// button shrink-wrapped inside it (see save.js). Matches
+				// `getJustificationClass()` (src/utils/justification.js).
+				$wrapper_class      = 'wp-block-designsetgo-icon-button dsgo-justify dsgo-justify--' . $justification;
+				$button_style_attr  = '' !== $button_style ? ' style="' . esc_attr( $button_style ) . '"' : '';
+
 				return array(
-					'opening' => '<' . $tag . ' class="' . esc_attr( implode( ' ', $class_parts ) ) . '" style="' . esc_attr( $button_style ) . '"' . $extra_attrs . '>' . $inner_html,
-					'closing' => '</' . $tag . '>',
+					'opening' => '<div class="' . esc_attr( $wrapper_class ) . '"><' . $tag . ' class="' . esc_attr( implode( ' ', $class_parts ) ) . '"' . $button_style_attr . $extra_attrs . '>' . $inner_html,
+					'closing' => '</' . $tag . '></div>',
 				);
 
 			case 'designsetgo/modal':
@@ -1202,26 +1311,84 @@ class Block_Inserter {
 				);
 
 			case 'designsetgo/modal-trigger':
-				$text          = isset( $attributes['text'] ) ? $attributes['text'] : 'Open Modal';
-				$button_style  = isset( $attributes['buttonStyle'] ) ? $attributes['buttonStyle'] : 'fill';
-				$width_style   = isset( $attributes['widthStyle'] ) ? $attributes['widthStyle'] : 'auto';
-				$icon          = isset( $attributes['icon'] ) ? $attributes['icon'] : '';
-				$icon_position = isset( $attributes['iconPosition'] ) ? $attributes['iconPosition'] : 'start';
+				$target_modal_id = isset( $attributes['targetModalId'] ) ? $attributes['targetModalId'] : '';
+				$text            = isset( $attributes['text'] ) ? $attributes['text'] : 'Open Modal';
+				$button_style    = isset( $attributes['buttonStyle'] ) ? $attributes['buttonStyle'] : 'fill';
+				$icon            = isset( $attributes['icon'] ) ? $attributes['icon'] : '';
+				$icon_position   = isset( $attributes['iconPosition'] ) ? $attributes['iconPosition'] : 'none';
+				$icon_gap        = isset( $attributes['iconGap'] ) ? $attributes['iconGap'] : '8px';
+				$icon_style      = isset( $attributes['iconStyle'] ) ? $attributes['iconStyle'] : '';
+				$stroke_width    = isset( $attributes['strokeWidth'] ) ? $attributes['strokeWidth'] : 1.5;
 
-				$outer_class = 'wp-block-designsetgo-modal-trigger dsgo-modal-trigger dsgo-modal-trigger--' . esc_attr( $button_style ) . ' dsgo-modal-trigger--width-' . esc_attr( $width_style );
-
-				$flex_direction    = 'end' === $icon_position ? 'row-reverse' : 'row';
-				$button_style_attr = 'flex-direction:' . $flex_direction;
-
-				$inner_html = '<button class="dsgo-modal-trigger__button" data-dsgo-modal-trigger="" style="' . esc_attr( $button_style_attr ) . '" type="button">';
-				if ( $icon && 'none' !== $icon_position ) {
-					$inner_html .= '<span class="dsgo-modal-trigger__icon dsgo-lazy-icon" data-icon-name="' . esc_attr( $icon ) . '"></span>';
+				// Read the current `justification`/`fullWidth` attributes; fall
+				// back to the legacy `align` for callers that still pass it
+				// (mirrors the icon-button case above).
+				$justification = isset( $attributes['justification'] )
+					? $attributes['justification']
+					: ( isset( $attributes['align'] ) ? $attributes['align'] : 'left' );
+				if ( ! in_array( $justification, array( 'left', 'center', 'right' ), true ) ) {
+					$justification = 'left';
 				}
+				$full_width = ! empty( $attributes['fullWidth'] ) || ( isset( $attributes['align'] ) && 'full' === $attributes['align'] );
+
+				$has_icon = 'none' !== $icon_position && $icon;
+
+				// Button classes — must match save.js's clsx() list exactly, or
+				// the block validator flags AI-inserted triggers as invalid.
+				$class_parts = array(
+					'dsgo-modal-trigger',
+					'dsgo-modal-trigger--' . $button_style,
+					'wp-block-button',
+					'wp-block-button__link',
+					'wp-element-button',
+				);
+				if ( $full_width ) {
+					$class_parts[] = 'dsgo-modal-trigger--full-width';
+				}
+				if ( 'end' === $icon_position ) {
+					$class_parts[] = 'dsgo-modal-trigger--icon-end';
+				}
+
+				// save.js writes the gap inline whenever there is an icon and an
+				// iconGap (which defaults to 8px); layout lives in style.scss.
+				$button_style_attr = '';
+				if ( $has_icon && '' !== $icon_gap ) {
+					$button_style_attr = ' style="' . esc_attr( 'gap:' . $icon_gap ) . '"';
+				}
+
+				// Icon span — size is only baked inline when the caller sets an
+				// explicit numeric iconSize, so the theme token owns it otherwise.
+				$icon_html = '';
+				if ( $has_icon ) {
+					$icon_attrs = '';
+					if ( isset( $attributes['iconSize'] ) && is_numeric( $attributes['iconSize'] ) ) {
+						$size        = intval( $attributes['iconSize'] );
+						$icon_attrs .= ' style="' . esc_attr( 'width:' . $size . 'px;height:' . $size . 'px' ) . '"';
+					}
+					$icon_attrs .= ' data-icon-name="' . esc_attr( $icon ) . '"';
+					if ( $icon_style ) {
+						$icon_attrs .= ' data-icon-style="' . esc_attr( $icon_style ) . '"';
+					}
+					if ( 'outlined' === $icon_style ) {
+						$icon_attrs .= ' data-icon-stroke-width="' . esc_attr( (string) $stroke_width ) . '"';
+					}
+					$icon_html = '<span class="dsgo-modal-trigger__icon dsgo-lazy-icon"' . $icon_attrs . '></span>';
+				}
+
+				$inner_html  = '<button class="' . esc_attr( implode( ' ', $class_parts ) ) . '"' . $button_style_attr;
+				$inner_html .= ' type="button" data-dsgo-modal-trigger="' . esc_attr( $target_modal_id ) . '">';
+				$inner_html .= $icon_html;
 				$inner_html .= '<span class="dsgo-modal-trigger__text">' . wp_kses_post( $text ) . '</span>';
 				$inner_html .= '</button>';
 
+				// The block root is a block-level justification wrapper — core's
+				// constrained layout caps IT at the content column — with the
+				// button shrink-wrapped inside it (see save.js). Matches
+				// `getJustificationClass()` (src/utils/justification.js).
+				$wrapper_class = 'wp-block-designsetgo-modal-trigger dsgo-justify dsgo-justify--' . $justification;
+
 				return array(
-					'opening' => '<div class="' . esc_attr( $outer_class ) . '" style="display:inline-block">' . $inner_html,
+					'opening' => '<div class="' . esc_attr( $wrapper_class ) . '">' . $inner_html,
 					'closing' => '</div>',
 				);
 
@@ -1369,11 +1536,16 @@ class Block_Inserter {
 			case 'designsetgo/scroll-accordion':
 				$align_items = isset( $attributes['alignItems'] ) ? $attributes['alignItems'] : 'flex-start';
 
-				// Inner styles.
-				$inner_style = 'display:flex;flex-direction:column;align-items:' . esc_attr( $align_items );
+				// Must match save.js: the constant layout (`width`/`align-self`
+				// on the root, `display`/`flex-direction` on the items wrapper)
+				// lives in style.scss and is no longer serialized. Only the
+				// author-controlled alignItems is written inline. Emitting the
+				// constants here would produce markup save() never generates, so
+				// the block would fail validation on first open.
+				$inner_style = 'align-items:' . esc_attr( $align_items );
 
 				return array(
-					'opening' => '<div class="wp-block-designsetgo-scroll-accordion dsgo-scroll-accordion" style="width:100%;align-self:stretch"><div class="dsgo-scroll-accordion__items" style="' . esc_attr( $inner_style ) . '">',
+					'opening' => '<div class="wp-block-designsetgo-scroll-accordion dsgo-scroll-accordion"><div class="dsgo-scroll-accordion__items" style="' . esc_attr( $inner_style ) . '">',
 					'closing' => '</div></div>',
 				);
 
@@ -1770,8 +1942,10 @@ class Block_Inserter {
 		if ( $field_label_color ) {
 			$style_parts[] = '--dsgo-form-label-color:' . esc_attr( $field_label_color );
 		}
-		// fieldBorderColor defaults to #d1d5db if empty.
-		$style_parts[] = '--dsgo-form-border-color:' . esc_attr( $field_border_color ? $field_border_color : '#d1d5db' );
+		// Omit when empty — .dsgo-form-builder in style.scss supplies the #d1d5db default.
+		if ( $field_border_color ) {
+			$style_parts[] = '--dsgo-form-border-color:' . esc_attr( $field_border_color );
+		}
 		if ( $field_background_color ) {
 			$style_parts[] = '--dsgo-form-field-bg:' . esc_attr( $field_background_color );
 		}
@@ -1864,18 +2038,6 @@ class Block_Inserter {
 	}
 
 	/**
-	 * Generate HTML for DesignSetGo blocks without inner blocks.
-	 *
-	 * @param string               $block_name Block name.
-	 * @param array<string, mixed> $attributes Block attributes.
-	 * @return string|null Generated HTML or null if not supported.
-	 */
-	private static function generate_designsetgo_block_html( string $block_name, array $attributes ): ?string {
-		return Form_Field_Html_Generator::generate( $block_name, $attributes );
-	}
-
-
-	/**
 	 * Generate HTML for core WordPress blocks.
 	 *
 	 * @param string               $block_name Block name.
@@ -1884,8 +2046,20 @@ class Block_Inserter {
 	 * @return string Generated HTML.
 	 */
 	private static function generate_core_block_html( string $block_name, string $content, array $attributes ): string {
-		$text_align = isset( $attributes['textAlign'] ) ? ' has-text-align-' . $attributes['textAlign'] : '';
-		$align      = isset( $attributes['align'] ) ? ' has-text-align-' . $attributes['align'] : '';
+		// These land inside class="...", so an arbitrary value would break out of
+		// the attribute: textAlign of `center" onmouseover="alert(1)` yields a
+		// live event handler. They are alignment keywords, so rather than merely
+		// escape them, constrain them to the set core actually emits — then the
+		// value is provably safe rather than safe-looking. Anything else is
+		// dropped, which is also the correct rendering for a nonsense alignment.
+		$allowed_alignments = array( 'left', 'center', 'right', 'justify' );
+
+		$text_align = ( isset( $attributes['textAlign'] ) && in_array( $attributes['textAlign'], $allowed_alignments, true ) )
+			? ' has-text-align-' . $attributes['textAlign']
+			: '';
+		$align      = ( isset( $attributes['align'] ) && in_array( $attributes['align'], $allowed_alignments, true ) )
+			? ' has-text-align-' . $attributes['align']
+			: '';
 
 		switch ( $block_name ) {
 			case 'core/heading':

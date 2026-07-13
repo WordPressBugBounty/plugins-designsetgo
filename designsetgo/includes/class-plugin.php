@@ -354,6 +354,13 @@ class Plugin {
 	public $button_global_styles;
 
 	/**
+	 * Scroll Marquee Styles instance.
+	 *
+	 * @var Scroll_Marquee_Styles
+	 */
+	public $scroll_marquee_styles;
+
+	/**
 	 * Admin Menu instance.
 	 *
 	 * @var Admin\Admin_Menu
@@ -408,6 +415,13 @@ class Plugin {
 	 * @var Section_Styles
 	 */
 	public $section_styles;
+
+	/**
+	 * Icon Button Styles instance.
+	 *
+	 * @var Icon_Button_Styles
+	 */
+	public $icon_button_styles;
 
 	/**
 	 * Sticky Header instance.
@@ -545,6 +559,7 @@ class Plugin {
 		require_once DESIGNSETGO_PATH . 'includes/core/class-assets.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/class-loader.php';
 		// --- Blocks: Forms ---
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/field-render-helpers.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-security.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-handler.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-submissions.php';
@@ -615,10 +630,12 @@ class Plugin {
 		// --- Render-time features ---
 		require_once DESIGNSETGO_PATH . 'includes/features/class-custom-css-renderer.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-section-styles.php';
+		require_once DESIGNSETGO_PATH . 'includes/features/class-icon-button-styles.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-sticky-header.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-overlay-header.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-icon-injector.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-button-global-styles.php';
+		require_once DESIGNSETGO_PATH . 'includes/features/class-scroll-marquee-styles.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-extension-attributes.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-style-binding.php';
 		require_once DESIGNSETGO_PATH . 'includes/bindings/class-block-bindings-support.php';
@@ -690,12 +707,16 @@ class Plugin {
 		$this->custom_css_renderer = new Custom_CSS_Renderer();
 		$this->section_styles      = new Section_Styles();
 		$this->section_styles->init();
+		$this->icon_button_styles = new Icon_Button_Styles();
+		$this->icon_button_styles->init();
 		$this->sticky_header        = new Sticky_Header();
 		$this->overlay_header       = new Overlay_Header();
 		$this->icon_injector        = new Icon_Injector();
 		$this->svg_pattern_renderer = new SVG_Pattern_Renderer();
 		$this->button_global_styles = new Button_Global_Styles();
 		$this->button_global_styles->init();
+		$this->scroll_marquee_styles = new Scroll_Marquee_Styles();
+		$this->scroll_marquee_styles->init();
 		$this->llms_txt = new LLMS_Txt\Controller();
 
 		// Initialize admin-only features.
@@ -779,7 +800,7 @@ class Plugin {
 		$asset_file = DESIGNSETGO_PATH . 'build/block-category-icon.asset.php';
 
 		if ( file_exists( $asset_file ) ) {
-			$asset = include $asset_file;
+			$asset = include $asset_file; // phpcs:ignore WordPressVIPMinimum.Files.IncludingFile.UsingVariable -- build artifact; path resolved from plugin directory
 
 			wp_enqueue_script(
 				'designsetgo-block-category-icon',
@@ -823,7 +844,7 @@ class Plugin {
 		$llms_asset_file = DESIGNSETGO_PATH . 'build/llms-txt.asset.php';
 
 		if ( file_exists( $llms_asset_file ) ) {
-			$llms_asset = include $llms_asset_file;
+			$llms_asset = include $llms_asset_file; // phpcs:ignore WordPressVIPMinimum.Files.IncludingFile.UsingVariable -- build artifact; path resolved from plugin directory
 
 			wp_enqueue_script(
 				'dsgo-llms-txt-panel',
@@ -838,7 +859,7 @@ class Plugin {
 		$overlay_asset_file = DESIGNSETGO_PATH . 'build/overlay-header.asset.php';
 
 		if ( file_exists( $overlay_asset_file ) ) {
-			$overlay_asset = include $overlay_asset_file;
+			$overlay_asset = include $overlay_asset_file; // phpcs:ignore WordPressVIPMinimum.Files.IncludingFile.UsingVariable -- build artifact; path resolved from plugin directory
 
 			wp_enqueue_script(
 				'dsgo-overlay-header-panel',
@@ -878,10 +899,10 @@ class Plugin {
 	 * Register DesignSetGo block category.
 	 *
 	 * @param array    $categories Block categories.
-	 * @param \WP_Post $post       Current post object (unused).
+	 * @param \WP_Post $_post      Current post object (unused).
 	 * @return array Modified categories.
 	 */
-	public function register_block_category( $categories, $post = null ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+	public function register_block_category( $categories, $_post = null ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
 		$categories[] = array(
 			'slug'  => 'designsetgo',
 			'title' => __( 'DesignSetGo', 'designsetgo' ),
@@ -1031,10 +1052,10 @@ class Plugin {
 	 * Blocks with explicit animations or "no animation" override are unchanged.
 	 *
 	 * @param string $block_content Rendered block content.
-	 * @param array  $block         Block data including attrs.
+	 * @param array  $_block        Block data including attrs (unused).
 	 * @return string Modified block content.
 	 */
-	public function apply_default_icon_button_hover( $block_content, $block ) {
+	public function apply_default_icon_button_hover( $block_content, $_block ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed -- WordPress hook callback signature
 		if ( empty( $block_content ) ) {
 			return $block_content;
 		}
@@ -1074,11 +1095,19 @@ class Plugin {
 			return $block_content;
 		}
 
-		// Use WP_HTML_Tag_Processor for safe class injection.
+		// Use WP_HTML_Tag_Processor for safe class injection. The block root is
+		// a justification wrapper (`.wp-block-designsetgo-icon-button`); the
+		// actual button/link carries `.dsgo-icon-button` one level in. Walking
+		// tags until we find that class also transparently handles un-migrated
+		// legacy markup, where the button IS the first (and only) tag.
 		$processor = new \WP_HTML_Tag_Processor( $block_content );
-		if ( $processor->next_tag() ) {
+		while ( $processor->next_tag() ) {
+			if ( ! $processor->has_class( 'dsgo-icon-button' ) ) {
+				continue;
+			}
 			$processor->add_class( 'dsgo-icon-button--' . $default );
 			$block_content = $processor->get_updated_html();
+			break;
 		}
 
 		return $block_content;
@@ -1091,10 +1120,10 @@ class Plugin {
 	 * admin settings > theme.json > none.
 	 *
 	 * @param string $block_content Rendered block content.
-	 * @param array  $block         Block data including attrs.
+	 * @param array  $_block        Block data including attrs (unused).
 	 * @return string Modified block content.
 	 */
-	public function apply_default_form_button_hover( $block_content, $block ) {
+	public function apply_default_form_button_hover( $block_content, $_block ) { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed -- WordPress hook callback signature
 		if ( empty( $block_content ) ) {
 			return $block_content;
 		}

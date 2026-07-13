@@ -18,12 +18,10 @@
   "icon": "images-alt2",
   "attributes": {
     "height": {
-      "type": "string",
-      "default": "500px"
+      "type": "string"
     },
     "gap": {
-      "type": "string",
-      "default": "4px"
+      "type": "string"
     },
     "expandedRatio": {
       "type": "number",
@@ -38,16 +36,13 @@
       "default": true
     },
     "overlayColor": {
-      "type": "string",
-      "default": "#000000"
+      "type": "string"
     },
     "overlayOpacity": {
-      "type": "number",
-      "default": 40
+      "type": "number"
     },
     "overlayOpacityExpanded": {
-      "type": "number",
-      "default": 20
+      "type": "number"
     },
     "triggerType": {
       "type": "string",
@@ -103,9 +98,7 @@
     }
   },
   "example": {
-    "attributes": {
-      "height": "500px"
-    },
+    "attributes": {},
     "innerBlocks": [
       {
         "name": "designsetgo/image-accordion-item",

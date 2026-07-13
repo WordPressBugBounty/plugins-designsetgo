@@ -15,28 +15,26 @@
   "textdomain": "designsetgo",
   "icon": "tag",
   "attributes": {
-    "align": {
-      "type": "string",
-      "default": "center"
-    },
     "content": {
       "type": "string",
       "default": ""
     },
-    "fontSize": {
+    "justification": {
       "type": "string",
-      "default": "small"
+      "enum": [
+        "left",
+        "center",
+        "right"
+      ],
+      "default": "center"
+    },
+    "align": {
+      "type": "string"
     }
   },
   "supports": {
     "html": false,
     "inserter": true,
-    "align": [
-      "left",
-      "center",
-      "right"
-    ],
-    "alignWide": false,
     "spacing": {
       "padding": true,
       "margin": [
@@ -46,7 +44,10 @@
       "__experimentalDefaultControls": {
         "padding": true
       },
-      "__experimentalSelector": ".dsgo-pill__content"
+      "__experimentalSelector": ".dsgo-pill__content",
+      "__experimentalSkipSerialization": [
+        "padding"
+      ]
     },
     "color": {
       "background": true,
@@ -56,7 +57,8 @@
         "background": true,
         "text": true
       },
-      "__experimentalSelector": ".dsgo-pill__content"
+      "__experimentalSelector": ".dsgo-pill__content",
+      "__experimentalSkipSerialization": true
     },
     "typography": {
       "fontSize": true,
@@ -82,7 +84,8 @@
       "__experimentalDefaultControls": {
         "radius": true
       },
-      "__experimentalSelector": ".dsgo-pill__content"
+      "__experimentalSelector": ".dsgo-pill__content",
+      "__experimentalSkipSerialization": true
     }
   },
   "example": {
@@ -92,5 +95,6 @@
   },
   "editorScript": "file:./index.js",
   "editorStyle": "file:./index.css",
-  "style": "file:./index.css"
+  "style": "file:./index.css",
+  "render": "file:./render.php"
 }

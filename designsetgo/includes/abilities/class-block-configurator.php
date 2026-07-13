@@ -108,7 +108,11 @@ class Block_Configurator {
 		$updated = wp_update_post(
 			array(
 				'ID'           => $post->ID,
-				'post_content' => $content,
+				// wp_update_post() runs wp_unslash() on every field, which would
+				// strip the JSON-escape backslashes serialize_blocks() writes into
+				// block-comment attributes (\n, \", \\, \uXXXX). Slash first so the
+				// stored content is byte-identical to what we serialized.
+				'post_content' => wp_slash( $content ),
 			),
 			true
 		);
@@ -462,7 +466,11 @@ class Block_Configurator {
 		$result = wp_update_post(
 			array(
 				'ID'           => $post->ID,
-				'post_content' => $content,
+				// wp_update_post() runs wp_unslash() on every field, which would
+				// strip the JSON-escape backslashes serialize_blocks() writes into
+				// block-comment attributes (\n, \", \\, \uXXXX). Slash first so the
+				// stored content is byte-identical to what we serialized.
+				'post_content' => wp_slash( $content ),
 			),
 			true
 		);
@@ -506,7 +514,7 @@ class Block_Configurator {
 
 					// Validate block name if expected name provided.
 					if ( '' !== $expected_block_name && $block['blockName'] !== $expected_block_name ) {
-						$counter++;
+						++$counter;
 						$modified[] = $block;
 						continue;
 					}
@@ -516,7 +524,7 @@ class Block_Configurator {
 					$updated        = true;
 				}
 
-				$counter++;
+				++$counter;
 			}
 
 			// Recursively walk inner blocks.
@@ -628,7 +636,11 @@ class Block_Configurator {
 		$result = wp_update_post(
 			array(
 				'ID'           => $post->ID,
-				'post_content' => $content,
+				// wp_update_post() runs wp_unslash() on every field, which would
+				// strip the JSON-escape backslashes serialize_blocks() writes into
+				// block-comment attributes (\n, \", \\, \uXXXX). Slash first so the
+				// stored content is byte-identical to what we serialized.
+				'post_content' => wp_slash( $content ),
 			),
 			true
 		);
@@ -697,7 +709,7 @@ class Block_Configurator {
 									$content_position = $idx;
 									break;
 								}
-								$null_count++;
+								++$null_count;
 							}
 						}
 
@@ -718,7 +730,7 @@ class Block_Configurator {
 					$found                 = true;
 				}
 
-				$counter++;
+				++$counter;
 			}
 
 			// Recursively search inner blocks.
@@ -942,7 +954,7 @@ class Block_Configurator {
 		// Also update innerContent array if present.
 		// Only update the FIRST string element (the opening wrapper with wp-block-* class).
 		if ( ! empty( $block['innerContent'] ) && is_array( $block['innerContent'] ) ) {
-			$updated_first = false;
+			$updated_first         = false;
 			$block['innerContent'] = array_map(
 				function ( $content ) use ( $attributes, $data_mappings, $css_modifiers, $css_var_map, $block_name, &$updated_first ) {
 					if ( ! is_string( $content ) || $updated_first ) {
@@ -1043,10 +1055,10 @@ class Block_Configurator {
 	 * @param array<string, string> $data_mappings Data attribute mappings.
 	 * @param array<string, mixed>  $css_modifiers CSS modifier mappings.
 	 * @param array<string, string> $css_var_map  CSS variable mappings.
-	 * @param string                $block_name   Block name.
+	 * @param string                $_block_name  Block name (unused).
 	 * @return string Updated HTML.
 	 */
-	private static function update_html_content( string $html, array $attributes, array $data_mappings, array $css_modifiers, array $css_var_map, string $block_name ): string {
+	private static function update_html_content( string $html, array $attributes, array $data_mappings, array $css_modifiers, array $css_var_map, string $_block_name ): string { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed -- ability interface signature
 		foreach ( $attributes as $key => $value ) {
 			$string_value = self::value_to_string( $value );
 
@@ -1101,7 +1113,7 @@ class Block_Configurator {
 				$html = preg_replace( '/class="([^"]*)"/', 'class="$1 ' . esc_attr( $new_class ) . '"', $html, 1 );
 			}
 		} elseif ( is_array( $modifier ) ) {
-			// Handle boolean/value mapping (e.g., {"true": "dsgo-accordion--border-between", "false": ""}).
+			// Handle boolean/value mapping — map each modifier value to its CSS class name.
 			$string_value = self::value_to_string( $value );
 			$old_class    = null;
 			$new_class    = null;

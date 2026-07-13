@@ -17,12 +17,12 @@
   "usesContext": [
     "designsetgo/hoverIconBackgroundColor"
   ],
+  "selectors": {
+    "root": ".wp-block-designsetgo-icon .dsgo-icon__wrapper"
+  },
   "supports": {
     "anchor": true,
     "align": [
-      "left",
-      "center",
-      "right",
       "wide",
       "full"
     ],
@@ -34,7 +34,10 @@
       "__experimentalDefaultControls": {
         "margin": true,
         "padding": true
-      }
+      },
+      "__experimentalSkipSerialization": [
+        "padding"
+      ]
     },
     "color": {
       "background": true,
@@ -42,7 +45,8 @@
       "__experimentalDefaultControls": {
         "background": true,
         "text": true
-      }
+      },
+      "__experimentalSkipSerialization": true
     },
     "__experimentalBorder": {
       "color": true,
@@ -51,7 +55,8 @@
       "width": true,
       "__experimentalDefaultControls": {
         "radius": true
-      }
+      },
+      "__experimentalSkipSerialization": true
     }
   },
   "attributes": {
@@ -59,9 +64,17 @@
       "type": "string",
       "default": "star"
     },
+    "justification": {
+      "type": "string",
+      "enum": [
+        "left",
+        "center",
+        "right"
+      ],
+      "default": "center"
+    },
     "iconStyle": {
       "type": "string",
-      "default": "filled",
       "enum": [
         "filled",
         "outlined"
@@ -72,8 +85,7 @@
       "default": 1.5
     },
     "iconSize": {
-      "type": "number",
-      "default": 48
+      "type": "number"
     },
     "rotation": {
       "type": "number",
@@ -108,5 +120,6 @@
   },
   "editorScript": "file:./index.js",
   "editorStyle": "file:./index.css",
-  "style": "file:./index.css"
+  "style": "file:./index.css",
+  "render": "file:./render.php"
 }

@@ -94,6 +94,8 @@
     },
     "text": {
       "type": "string",
+      "source": "html",
+      "selector": ".dsgo-icon-button__text",
       "default": ""
     },
     "url": {

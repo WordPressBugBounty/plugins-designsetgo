@@ -735,12 +735,15 @@ class Block_Inserter {
 				$data_attrs .= ' data-show-minutes="' . ( $show_minutes ? 'true' : 'false' ) . '"';
 				$data_attrs .= ' data-show-seconds="' . ( $show_seconds ? 'true' : 'false' ) . '"';
 				$data_attrs .= ' data-completion-action="' . esc_attr( $completion_action ) . '"';
-				$data_attrs .= ' data-completion-message="' . esc_attr( $completion_message ) . '"';
+				// completionMessage is sourced from the message div's text (below),
+				// not a wrapper attribute — save.js no longer emits
+				// data-completion-message, so emitting it here would produce markup
+				// save() never generates and fail validation.
 
 				$container_style = 'gap:' . esc_attr( $unit_gap );
 				$outer_class     = 'wp-block-designsetgo-countdown-timer dsgo-countdown-timer dsgo-countdown-timer--' . esc_attr( $layout );
 
-				$inner_html  = '<div class="dsgo-countdown-timer__units">' . $units_html . '</div>';
+				$inner_html = '<div class="dsgo-countdown-timer__units">' . $units_html . '</div>';
 				// No inline display:none — style.scss hides this by default (view.js
 				// reveals it by setting an inline display:block, which wins either
 				// way). save.js stopped serializing it, so emitting it here would
@@ -829,17 +832,17 @@ class Block_Inserter {
 				);
 
 			case 'designsetgo/map':
-				$provider           = isset( $attributes['dsgoProvider'] ) ? $attributes['dsgoProvider'] : 'openstreetmap';
-				$latitude           = isset( $attributes['dsgoLatitude'] ) ? floatval( $attributes['dsgoLatitude'] ) : 40.7128;
-				$longitude          = isset( $attributes['dsgoLongitude'] ) ? floatval( $attributes['dsgoLongitude'] ) : -74.006;
-				$zoom               = isset( $attributes['dsgoZoom'] ) ? intval( $attributes['dsgoZoom'] ) : 13;
-				$address            = isset( $attributes['dsgoAddress'] ) ? $attributes['dsgoAddress'] : '';
-				$marker_icon        = isset( $attributes['dsgoMarkerIcon'] ) ? $attributes['dsgoMarkerIcon'] : '📍';
+				$provider    = isset( $attributes['dsgoProvider'] ) ? $attributes['dsgoProvider'] : 'openstreetmap';
+				$latitude    = isset( $attributes['dsgoLatitude'] ) ? floatval( $attributes['dsgoLatitude'] ) : 40.7128;
+				$longitude   = isset( $attributes['dsgoLongitude'] ) ? floatval( $attributes['dsgoLongitude'] ) : -74.006;
+				$zoom        = isset( $attributes['dsgoZoom'] ) ? intval( $attributes['dsgoZoom'] ) : 13;
+				$address     = isset( $attributes['dsgoAddress'] ) ? $attributes['dsgoAddress'] : '';
+				$marker_icon = isset( $attributes['dsgoMarkerIcon'] ) ? $attributes['dsgoMarkerIcon'] : '📍';
 				// Treat an unset OR explicitly-cleared ('') marker color as the
 				// block default, mirroring render.php — the editor now stores ''
 				// on clear, and the resolver short-circuits empty strings before
 				// consulting its own fallback.
-				$marker_color       = ( isset( $attributes['dsgoMarkerColor'] ) && '' !== $attributes['dsgoMarkerColor'] )
+				$marker_color = ( isset( $attributes['dsgoMarkerColor'] ) && '' !== $attributes['dsgoMarkerColor'] )
 					? $attributes['dsgoMarkerColor']
 					: '#e74c3c';
 				// Resolve theme palette presets (var:preset|color|{slug}) to a
@@ -939,15 +942,22 @@ class Block_Inserter {
 					$content_class .= 'dsgo-card__content--' . esc_attr( $content_alignment );
 				}
 
+				// title/subtitle/bodyText are DOM-sourced, so the element must stay
+				// in the markup whenever the text is non-empty (matching save.js) —
+				// a hidden field carries the `--hidden` modifier instead of being
+				// omitted, otherwise the sourced text would be silently lost.
 				$content_html = '';
-				if ( $show_title && $title ) {
-					$content_html .= '<h3 class="dsgo-card__title">' . wp_kses_post( $title ) . '</h3>';
+				if ( $title ) {
+					$title_class   = 'dsgo-card__title' . ( $show_title ? '' : ' dsgo-card__title--hidden' );
+					$content_html .= '<h3 class="' . esc_attr( $title_class ) . '">' . wp_kses_post( $title ) . '</h3>';
 				}
-				if ( $show_subtitle && $subtitle ) {
-					$content_html .= '<p class="dsgo-card__subtitle">' . wp_kses_post( $subtitle ) . '</p>';
+				if ( $subtitle ) {
+					$subtitle_class = 'dsgo-card__subtitle' . ( $show_subtitle ? '' : ' dsgo-card__subtitle--hidden' );
+					$content_html  .= '<p class="' . esc_attr( $subtitle_class ) . '">' . wp_kses_post( $subtitle ) . '</p>';
 				}
-				if ( $show_body && $body_text ) {
-					$content_html .= '<p class="dsgo-card__body">' . wp_kses_post( $body_text ) . '</p>';
+				if ( $body_text ) {
+					$body_class    = 'dsgo-card__body' . ( $show_body ? '' : ' dsgo-card__body--hidden' );
+					$content_html .= '<p class="' . esc_attr( $body_class ) . '">' . wp_kses_post( $body_text ) . '</p>';
 				}
 
 				// CTA area for inner blocks.
@@ -1087,10 +1097,10 @@ class Block_Inserter {
 				// target="_self" alongside href. Defaulting to '' here suppressed
 				// the attribute and every AI-inserted LINKED icon button failed
 				// validation on first open.
-				$link_target = isset( $attributes['linkTarget'] ) && '' !== $attributes['linkTarget']
+				$link_target    = isset( $attributes['linkTarget'] ) && '' !== $attributes['linkTarget']
 					? $attributes['linkTarget']
 					: '_self';
-				$rel         = isset( $attributes['rel'] ) ? $attributes['rel'] : '';
+				$rel            = isset( $attributes['rel'] ) ? $attributes['rel'] : '';
 				$icon           = isset( $attributes['icon'] ) ? $attributes['icon'] : 'lightbulb';
 				$icon_position  = isset( $attributes['iconPosition'] ) ? $attributes['iconPosition'] : 'start';
 				$icon_size      = isset( $attributes['iconSize'] ) ? intval( $attributes['iconSize'] ) : 20;
@@ -1206,8 +1216,8 @@ class Block_Inserter {
 				// constrained layout caps IT at the content column — with the
 				// button shrink-wrapped inside it (see save.js). Matches
 				// `getJustificationClass()` (src/utils/justification.js).
-				$wrapper_class      = 'wp-block-designsetgo-icon-button dsgo-justify dsgo-justify--' . $justification;
-				$button_style_attr  = '' !== $button_style ? ' style="' . esc_attr( $button_style ) . '"' : '';
+				$wrapper_class     = 'wp-block-designsetgo-icon-button dsgo-justify dsgo-justify--' . $justification;
+				$button_style_attr = '' !== $button_style ? ' style="' . esc_attr( $button_style ) . '"' : '';
 
 				return array(
 					'opening' => '<div class="' . esc_attr( $wrapper_class ) . '"><' . $tag . ' class="' . esc_attr( implode( ' ', $class_parts ) ) . '"' . $button_style_attr . $extra_attrs . '>' . $inner_html,
@@ -1240,8 +1250,9 @@ class Block_Inserter {
 				$nav_position            = isset( $attributes['navigationPosition'] ) ? $attributes['navigationPosition'] : 'sides';
 				$width                   = isset( $attributes['width'] ) ? $attributes['width'] : '600px';
 				$max_width               = isset( $attributes['maxWidth'] ) ? $attributes['maxWidth'] : '90vw';
-				$overlay_color           = isset( $attributes['overlayColor'] ) ? $attributes['overlayColor'] : '#000000';
+				$overlay_color           = isset( $attributes['overlayColor'] ) ? trim( (string) $attributes['overlayColor'] ) : '';
 				$overlay_opacity         = isset( $attributes['overlayOpacity'] ) ? floatval( $attributes['overlayOpacity'] ) : 80;
+				$overlay_blur            = isset( $attributes['overlayBlur'] ) ? intval( $attributes['overlayBlur'] ) : 0;
 				$show_close_button       = isset( $attributes['showCloseButton'] ) ? $attributes['showCloseButton'] : true;
 				$close_button_position   = isset( $attributes['closeButtonPosition'] ) ? $attributes['closeButtonPosition'] : 'inside-top-right';
 				$close_button_size       = isset( $attributes['closeButtonSize'] ) ? intval( $attributes['closeButtonSize'] ) : 24;
@@ -1272,8 +1283,21 @@ class Block_Inserter {
 				$data_attrs .= ' data-navigation-style="' . esc_attr( $nav_style ) . '"';
 				$data_attrs .= ' data-navigation-position="' . esc_attr( $nav_position ) . '"';
 
-				// Overlay styles.
-				$overlay_style = 'background-color:' . esc_attr( $overlay_color ) . ';opacity:' . ( $overlay_opacity / 100 );
+				// Overlay styles. save.js writes background-color ONLY when the
+				// author set overlayColor explicitly (hasExplicitString) — left
+				// unset, the stylesheet default owns the scrim
+				// (--wp--custom--designsetgo--modal--overlay-color → #000) — so
+				// mirror that here, and the property order (background-color,
+				// opacity, backdrop-filter), or the block fails validation on
+				// first edit.
+				$overlay_style = '';
+				if ( '' !== $overlay_color ) {
+					$overlay_style .= 'background-color:' . esc_attr( self::convert_color_value_to_css_var( $overlay_color ) ) . ';';
+				}
+				$overlay_style .= 'opacity:' . ( $overlay_opacity / 100 );
+				if ( $overlay_blur > 0 ) {
+					$overlay_style .= ';backdrop-filter:blur(' . $overlay_blur . 'px)';
+				}
 
 				// Content styles.
 				$content_style = 'border-style:none;border-width:0px;width:' . esc_attr( $width ) . ';max-width:' . esc_attr( $max_width );
@@ -1305,8 +1329,12 @@ class Block_Inserter {
 				}
 				$closing_html .= '</div></div></div>';
 
+				// save.js omits the id attribute while modalId is blank
+				// (React would render id=""), so mirror that here too.
+				$id_attr = '' !== $modal_id ? ' id="' . esc_attr( $modal_id ) . '"' : '';
+
 				return array(
-					'opening' => '<div id="' . esc_attr( $modal_id ) . '" role="dialog" aria-modal="true" aria-label="Modal" aria-hidden="true"' . $data_attrs . ' class="' . esc_attr( $outer_class ) . '">' . $inner_html,
+					'opening' => '<div' . $id_attr . ' role="dialog" aria-modal="true" aria-label="Modal" aria-hidden="true"' . $data_attrs . ' class="' . esc_attr( $outer_class ) . '">' . $inner_html,
 					'closing' => $closing_html,
 				);
 
@@ -1450,11 +1478,14 @@ class Block_Inserter {
 
 				// Inner HTML.
 				$inner_html = '<div class="dsgo-table-of-contents__content">';
-				if ( $show_title ) {
-					$inner_html .= '<div class="dsgo-table-of-contents__title">' . esc_html( $title_text ) . '</div>';
-				}
-				$inner_html .= '<' . $list_tag . ' class="dsgo-table-of-contents__list"></' . $list_tag . '>';
-				$inner_html .= '</div>';
+				// titleText is DOM-sourced, so the title element is always rendered
+				// (matching save.js) and hidden via the `--hidden` modifier when the
+				// toggle is off, rather than being omitted — otherwise a hidden
+				// title's text would be silently lost on reload.
+				$toc_title_class = 'dsgo-table-of-contents__title' . ( $show_title ? '' : ' dsgo-table-of-contents__title--hidden' );
+				$inner_html     .= '<div class="' . esc_attr( $toc_title_class ) . '">' . esc_html( $title_text ) . '</div>';
+				$inner_html     .= '<' . $list_tag . ' class="dsgo-table-of-contents__list"></' . $list_tag . '>';
+				$inner_html     .= '</div>';
 
 				return array(
 					'opening' => '<div class="' . esc_attr( implode( ' ', $class_parts ) ) . '"' . $data_attrs . '>' . $inner_html,
@@ -1899,6 +1930,7 @@ class Block_Inserter {
 		$submit_button_text               = $attributes['submitButtonText'] ?? 'Submit';
 		$submit_button_alignment          = $attributes['submitButtonAlignment'] ?? 'left';
 		$submit_button_position           = $attributes['submitButtonPosition'] ?? 'below';
+		$submit_button_variation          = $attributes['submitButtonVariation'] ?? 'default';
 		$ajax_submit                      = $attributes['ajaxSubmit'] ?? true;
 		$success_message                  = $attributes['successMessage'] ?? 'Thank you! Your form has been submitted successfully.';
 		$error_message                    = $attributes['errorMessage'] ?? 'There was an error submitting the form. Please try again.';
@@ -1923,6 +1955,14 @@ class Block_Inserter {
 		$email_from_email                 = $attributes['emailFromEmail'] ?? '';
 		$email_reply_to                   = $attributes['emailReplyTo'] ?? '';
 		$email_body                       = $attributes['emailBody'] ?? '';
+
+		// Submit-button style variation class - must match save.js. Validated
+		// against the block.json enum so an AI-supplied value can't inject markup.
+		// The `is-style-` namespace (not `dsgo-form__submit--*`) keeps it clear of
+		// the layout/state/animation modifiers that share the BEM namespace.
+		$submit_button_variation_class = in_array( $submit_button_variation, array( 'secondary', 'outline' ), true )
+			? ' is-style-' . $submit_button_variation
+			: '';
 
 		// Build classes - must match save.js.
 		$classes = $block_class;
@@ -1957,7 +1997,9 @@ class Block_Inserter {
 			'data-ajax-submit="' . ( $ajax_submit ? 'true' : 'false' ) . '"',
 			'data-success-message="' . esc_attr( $success_message ) . '"',
 			'data-error-message="' . esc_attr( $error_message ) . '"',
-			'data-submit-text="' . esc_attr( $submit_button_text ) . '"',
+			// submitButtonText is sourced from the submit button's text, not a
+			// wrapper attribute — save.js no longer emits data-submit-text, so
+			// emitting it here would fail block validation.
 			'data-enable-email="' . ( $enable_email ? 'true' : 'false' ) . '"',
 			'data-email-to="' . esc_attr( $email_to ) . '"',
 			'data-email-subject="' . esc_attr( $email_subject ) . '"',
@@ -1999,7 +2041,7 @@ class Block_Inserter {
 
 		// Inline button goes inside fields wrapper, before closing.
 		if ( 'inline' === $submit_button_position ) {
-			$closing .= '<button type="submit" class="dsgo-form__submit dsgo-form__submit--inline wp-element-button" style="' . $button_style . '">' . esc_html( $submit_button_text ) . '</button>';
+			$closing .= '<button type="submit" class="dsgo-form__submit dsgo-form__submit--inline' . $submit_button_variation_class . ' wp-element-button" style="' . $button_style . '">' . esc_html( $submit_button_text ) . '</button>';
 		}
 
 		// Close fields wrapper.
@@ -2021,7 +2063,7 @@ class Block_Inserter {
 		// Footer with button (below position).
 		if ( 'below' === $submit_button_position ) {
 			$closing .= '<div class="dsgo-form__footer">';
-			$closing .= '<button type="submit" class="dsgo-form__submit wp-element-button" style="' . $button_style . '">' . esc_html( $submit_button_text ) . '</button>';
+			$closing .= '<button type="submit" class="dsgo-form__submit' . $submit_button_variation_class . ' wp-element-button" style="' . $button_style . '">' . esc_html( $submit_button_text ) . '</button>';
 			$closing .= '</div>';
 		}
 
@@ -2158,6 +2200,25 @@ class Block_Inserter {
 				// Ensure uniqueId is set for accessibility attributes.
 				if ( ! isset( $attributes['uniqueId'] ) ) {
 					$attributes['uniqueId'] = 'accordion-item-' . wp_generate_uuid4();
+				}
+				break;
+
+			case 'designsetgo/modal':
+				// Trim overlayColor HERE, where both consumers (the wrapper
+				// HTML builder and the serialized comment attrs) still share
+				// one array — save.js's hasExplicitString()/
+				// convertColorToCSSVar() never trim, so an untrimmed stored
+				// value would regenerate different markup on first parse and
+				// fail validation. Whitespace-only means "not set": drop the
+				// attribute so the scrim inherits the stylesheet default,
+				// matching an editor-cleared color.
+				if ( isset( $attributes['overlayColor'] ) ) {
+					$trimmed_overlay = trim( (string) $attributes['overlayColor'] );
+					if ( '' === $trimmed_overlay ) {
+						unset( $attributes['overlayColor'] );
+					} else {
+						$attributes['overlayColor'] = $trimmed_overlay;
+					}
 				}
 				break;
 

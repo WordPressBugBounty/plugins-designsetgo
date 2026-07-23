@@ -27,7 +27,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Configure_Shape_Divider extends Abstract_Ability {
 
 	/**
-	 * All 23 valid shape divider names from shape-dividers.js.
+	 * All 29 valid shape divider names from shape-dividers.js.
 	 *
 	 * @var array<string>
 	 */
@@ -55,6 +55,12 @@ class Configure_Shape_Divider extends Abstract_Ability {
 		'steps',
 		'torn',
 		'slime',
+		'triangle-layered',
+		'triangle-layered-extra',
+		'curvy-triangle-layered',
+		'symmetric-waves-layered',
+		'side-triangle-layered',
+		'side-triangle-layered-extra',
 	);
 
 	/**
@@ -74,7 +80,7 @@ class Configure_Shape_Divider extends Abstract_Ability {
 	public function get_config(): array {
 		return array(
 			'label'               => __( 'Configure Shape Divider', 'designsetgo' ),
-			'description'         => __( 'Adds or updates shape dividers on a section block. Supports top, bottom, or both positions with 23 shape types, custom colors, height, width, flip, and layering options.', 'designsetgo' ),
+			'description'         => __( 'Adds or updates shape dividers on a section block. Supports top, bottom, or both positions with 29 shape types, custom colors, height, width, flip, and layering options.', 'designsetgo' ),
 			'category'            => 'blocks',
 			'input_schema'        => $this->get_input_schema(),
 			'output_schema'       => Block_Configurator::get_default_output_schema(),
@@ -112,7 +118,7 @@ class Configure_Shape_Divider extends Abstract_Ability {
 				),
 				'shape'           => array(
 					'type'        => 'string',
-					'description' => __( 'Shape type. Available: wave, wave-double, wave-layered, wave-asymmetric, tilt, tilt-reverse, curve, curve-asymmetric, triangle, triangle-asymmetric, arrow, arrow-wide, peaks, peaks-soft, zigzag, book, clouds, drops, split, fan, steps, torn, slime', 'designsetgo' ),
+					'description' => __( 'Shape type. Available: wave, wave-double, wave-layered, wave-asymmetric, tilt, tilt-reverse, curve, curve-asymmetric, triangle, triangle-asymmetric, arrow, arrow-wide, peaks, peaks-soft, zigzag, book, clouds, drops, split, fan, steps, torn, slime, triangle-layered, triangle-layered-extra, curvy-triangle-layered, symmetric-waves-layered, side-triangle-layered, side-triangle-layered-extra', 'designsetgo' ),
 					'enum'        => self::VALID_SHAPES,
 				),
 				'color'           => array(
@@ -200,7 +206,7 @@ class Configure_Shape_Divider extends Abstract_Ability {
 			);
 		}
 
-		// Validate shape is one of the 23 known values.
+		// Validate shape is one of the known values.
 		if ( ! in_array( $shape, self::VALID_SHAPES, true ) ) {
 			return $this->error(
 				'validation_failed',
@@ -405,6 +411,17 @@ class Configure_Shape_Divider extends Abstract_Ability {
 				// Already range-validated in execute().
 				$attributes[ 'shapeDivider' . $pos . 'Width' ] = $width;
 			}
+
+			// Deliberately no `shapeDivider{Pos}Spacing` (content clearance) here.
+			// Clearance is derived live from the divider's rendered height by the
+			// stylesheet fallback (see `_shape-divider.scss` +
+			// `getRenderedShapeHeight()` in save.js/edit.js), so an omitted spacing
+			// still clears content that matches the divider height. Writing an
+			// explicit px snapshot instead would go stale on a partial follow-up
+			// call: `Height` uses patch semantics (only written when passed), but a
+			// snapshot spacing would be re-written every call and could then reserve
+			// the wrong amount against an unchanged height. Leaving it unset keeps
+			// this path consistent with the editor's default-clearance behavior.
 
 			$attributes[ 'shapeDivider' . $pos . 'FlipX' ] = $flip_x;
 			$attributes[ 'shapeDivider' . $pos . 'FlipY' ] = $flip_y;

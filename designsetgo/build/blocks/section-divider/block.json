@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "title": "Section Divider",
   "category": "design",
-  "description": "A standalone shape divider you can drop between any two blocks. Shape, height, and color inherit from your theme by default.",
+  "description": "A standalone shape divider you can drop between any two blocks. Shape, height, width, and color inherit from your theme by default.",
   "keywords": [
     "divider",
     "shape",
@@ -25,7 +25,7 @@
     },
     "width": {
       "type": "number",
-      "default": 100
+      "default": null
     },
     "flipX": {
       "type": "boolean",

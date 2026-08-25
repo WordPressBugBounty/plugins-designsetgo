@@ -132,6 +132,9 @@ class Plugin {
 		'lineargradient',
 		'radialgradient',
 		'stop',
+		'text',
+		'textpath',
+		'tspan',
 	);
 
 	/**
@@ -179,6 +182,13 @@ class Plugin {
 		'aria-label'          => true,
 		'role'                => true,
 		'focusable'           => true,
+		'href'                => true,
+		'startoffset'         => true,
+		'direction'           => true,
+		// <tspan> offsets: Text Path wraps its text in a <tspan dy> when
+		// pathPadding is non-zero, so both axes must survive wp_kses_post().
+		'dx'                  => true,
+		'dy'                  => true,
 		// Gradient stop attributes.
 		'offset'              => true,
 		'stop-color'          => true,
@@ -492,6 +502,20 @@ class Plugin {
 	public $style_binding;
 
 	/**
+	 * Interaction layers instance.
+	 *
+	 * @var Interactions
+	 */
+	public $interactions;
+
+	/**
+	 * Schema JSON-LD output instance.
+	 *
+	 * @var SchemaOutput
+	 */
+	public $schema_output;
+
+	/**
 	 * Block Bindings Support instance.
 	 *
 	 * @var Block_Bindings_Support
@@ -580,6 +604,7 @@ class Plugin {
 		// --- Blocks: Query engine ---
 		require_once DESIGNSETGO_PATH . 'includes/blocks/query/class-query.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/query/class-query-template-controller.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/text-path/class-text-path-controller.php';
 		// --- Block Bindings (cross-cutting) ---
 		require_once DESIGNSETGO_PATH . 'includes/bindings/class-query-bindings-helpers.php';
 		require_once DESIGNSETGO_PATH . 'includes/bindings/class-query-bindings.php';
@@ -596,6 +621,7 @@ class Plugin {
 		require_once DESIGNSETGO_PATH . 'includes/dynamic-tags/class-dynamic-tags-sources-site.php';
 		require_once DESIGNSETGO_PATH . 'includes/dynamic-tags/class-dynamic-tags-sources-archive.php';
 		require_once DESIGNSETGO_PATH . 'includes/dynamic-tags/class-dynamic-tags-sources-user.php';
+		require_once DESIGNSETGO_PATH . 'includes/dynamic-tags/class-dynamic-tags-sources-woo.php';
 		require_once DESIGNSETGO_PATH . 'includes/dynamic-tags/class-dynamic-tags-field-discovery.php';
 		require_once DESIGNSETGO_PATH . 'includes/dynamic-tags/class-dynamic-tags-image-resolver.php';
 		require_once DESIGNSETGO_PATH . 'includes/dynamic-tags/class-dynamic-tags-rest.php';
@@ -650,6 +676,8 @@ class Plugin {
 		require_once DESIGNSETGO_PATH . 'includes/features/class-scroll-marquee-styles.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-extension-attributes.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-style-binding.php';
+		require_once DESIGNSETGO_PATH . 'includes/features/class-interactions.php';
+		require_once DESIGNSETGO_PATH . 'includes/features/class-schema-output.php';
 		require_once DESIGNSETGO_PATH . 'includes/bindings/class-block-bindings-support.php';
 		require_once DESIGNSETGO_PATH . 'includes/data/svg-pattern-data.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-svg-pattern-renderer.php';
@@ -701,6 +729,8 @@ class Plugin {
 		$this->blocks                 = new Blocks\Loader();
 		$this->extension_attrs        = new Extension_Attributes();
 		$this->style_binding          = new StyleBinding();
+		$this->interactions           = new Interactions();
+		$this->schema_output          = new SchemaOutput();
 		$this->block_bindings_support = new Block_Bindings_Support();
 		$this->block_bindings_support->register();
 		$this->modal_hooks      = new Blocks\Modal_Hooks();
@@ -708,6 +738,7 @@ class Plugin {
 		$this->form_submissions = new Blocks\Form_Submissions();
 		$this->query_controller = new Blocks\Query\Controller();
 		add_action( 'rest_api_init', array( 'DesignSetGo\Blocks\Query\Template_Controller', 'register_routes' ) );
+		add_action( 'rest_api_init', array( 'DesignSetGo\Blocks\Text_Path\Controller', 'register_routes' ) );
 		$this->query_bindings = new Blocks\Query\Bindings();
 		$this->dynamic_tags   = new Blocks\DynamicTags\Bootstrap();
 		$this->filter_index   = new Blocks\Query\FilterIndex();

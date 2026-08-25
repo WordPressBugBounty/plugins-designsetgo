@@ -40,7 +40,8 @@
   "usesContext": [
     "designsetgo/queryId",
     "designsetgo/querySource",
-    "designsetgo/queryPostType"
+    "designsetgo/queryPostType",
+    "designsetgo/queryTaxQuery"
   ],
   "attributes": {
     "filterKind": {

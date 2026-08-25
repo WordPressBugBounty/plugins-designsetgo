@@ -56,7 +56,8 @@
   "providesContext": {
     "designsetgo/queryId": "queryId",
     "designsetgo/querySource": "source",
-    "designsetgo/queryPostType": "postType"
+    "designsetgo/queryPostType": "postType",
+    "designsetgo/queryTaxQuery": "taxQuery"
   },
   "attributes": {
     "queryId": {
@@ -91,6 +92,22 @@
     "postType": {
       "type": "string",
       "default": "post"
+    },
+    "wooCatalogVisibility": {
+      "type": "boolean",
+      "default": true
+    },
+    "wooFeatured": {
+      "type": "boolean",
+      "default": false
+    },
+    "wooOnSale": {
+      "type": "boolean",
+      "default": false
+    },
+    "wooStockStatus": {
+      "type": "array",
+      "default": []
     },
     "perPage": {
       "type": "number",

@@ -47,8 +47,10 @@ abstract class Abstract_Ability {
 	 * - input_schema: JSON Schema for inputs
 	 * - output_schema: JSON Schema for outputs
 	 * - show_in_rest: (bool) Expose via REST API (default true). Moved into meta by register().
+	 * - public: (bool) WP 7.1+ unified external-client exposure flag (MCP, AI agents).
+	 *   Defaults to show_in_rest. Moved into meta by register().
 	 * - annotations: (array) Behavioral hints — readonly, destructive, idempotent. Moved into meta by register().
-	 * - meta: (array) Additional metadata. WP_Ability stores show_in_rest and annotations here.
+	 * - meta: (array) Additional metadata. WP_Ability stores show_in_rest, public and annotations here.
 	 *
 	 * Note: execute_callback is added automatically during registration.
 	 *
@@ -65,18 +67,18 @@ abstract class Abstract_Ability {
 	abstract public function execute( array $input );
 
 	/**
-	 * Register this ability with WordPress.
+	 * Normalise an ability config into the shape WP_Ability expects.
 	 *
-	 * @return void
+	 * WP_Ability::__construct emits a _doing_it_wrong notice for any unknown
+	 * top-level property, so properties it only recognises under `meta` are
+	 * moved there. Kept separate from register() so the resolution rules —
+	 * particularly the WP 7.1 `public` flag — are testable without the
+	 * Abilities API being present.
+	 *
+	 * @param array<string, mixed> $config Raw config from get_config().
+	 * @return array<string, mixed> Normalised config.
 	 */
-	public function register(): void {
-		if ( ! class_exists( 'WP_Ability' ) ) {
-			return;
-		}
-
-		$config                     = $this->get_config();
-		$config['execute_callback'] = array( $this, 'execute' );
-
+	public static function normalize_config( array $config ): array {
 		// Ensure meta array exists.
 		if ( ! isset( $config['meta'] ) || ! is_array( $config['meta'] ) ) {
 			$config['meta'] = array();
@@ -89,6 +91,32 @@ abstract class Abstract_Ability {
 		} elseif ( ! isset( $config['meta']['show_in_rest'] ) ) {
 			$config['meta']['show_in_rest'] = true;
 		}
+
+		// WP 7.1 added meta.public: one high-level flag saying an ability is
+		// meant for external clients, which every channel reads instead of each
+		// one carrying its own switch. show_in_rest still wins for REST when
+		// both are set, so this only decides the channels REST does not cover
+		// (MCP adapters, AI agents). Core defaults it to false, so leaving it
+		// unset would hide every DesignSetGo ability from exactly the agent
+		// clients these abilities exist to serve, even though they stay
+		// reachable over REST.
+		//
+		// Default it to the resolved show_in_rest: an ability we already
+		// publish over REST is one we intend external clients to use. An
+		// ability can still opt out by declaring `public` itself.
+		if ( isset( $config['public'] ) ) {
+			$config['meta']['public'] = $config['public'];
+			unset( $config['public'] );
+		} elseif ( ! isset( $config['meta']['public'] ) ) {
+			$config['meta']['public'] = $config['meta']['show_in_rest'];
+		}
+
+		// WP 7.1 throws InvalidArgumentException when either flag is a
+		// non-boolean, where 6.9/7.0 accepted anything truthy. Normalise here
+		// so a stray 1 or 'yes' in an ability's config cannot take down
+		// registration for the whole plugin.
+		$config['meta']['show_in_rest'] = (bool) $config['meta']['show_in_rest'];
+		$config['meta']['public']       = (bool) $config['meta']['public'];
 
 		// Move annotations into meta (WP 6.9 expects it nested in meta, not top-level).
 		if ( isset( $config['annotations'] ) ) {
@@ -104,6 +132,22 @@ abstract class Abstract_Ability {
 			$config['meta']['keywords'] = $config['keywords'];
 			unset( $config['keywords'] );
 		}
+
+		return $config;
+	}
+
+	/**
+	 * Register this ability with WordPress.
+	 *
+	 * @return void
+	 */
+	public function register(): void {
+		if ( ! class_exists( 'WP_Ability' ) ) {
+			return;
+		}
+
+		$config                     = self::normalize_config( $this->get_config() );
+		$config['execute_callback'] = array( $this, 'execute' );
 
 		// wp_register_ability() is a WP 6.9+ function, but this plugin supports
 		// WP 6.7+. This method only runs on the wp_abilities_api_init hook, which
@@ -139,7 +183,7 @@ abstract class Abstract_Ability {
 
 		if ( ! $post ) {
 			return new WP_Error(
-				'invalid_post',
+				'designsetgo_invalid_post',
 				__( 'Post not found.', 'designsetgo' ),
 				array( 'status' => 404 )
 			);
@@ -210,25 +254,25 @@ abstract class Abstract_Ability {
 	 */
 	private function get_default_status_for_error( string $code ): int {
 		$status_map = array(
-			'invalid_post'             => 404,
-			'post_not_found'           => 404,
-			'block_not_found'          => 404,
-			'not_found'                => 404,
-			'permission_denied'        => 403,
-			'rest_forbidden'           => 403,
-			'unauthorized'             => 401,
-			'missing_post_id'          => 400,
-			'missing_block_name'       => 400,
-			'missing_settings'         => 400,
-			'missing_animation'        => 400,
-			'missing_faqs'             => 400,
-			'missing_css'              => 400,
-			'missing_operations'       => 400,
-			'missing_block_identifier' => 400,
-			'missing_attributes'       => 400,
-			'invalid_input'            => 400,
-			'validation_failed'        => 400,
-			'block_name_mismatch'      => 400,
+			'designsetgo_invalid_post'             => 404,
+			'designsetgo_post_not_found'           => 404,
+			'designsetgo_block_not_found'          => 404,
+			'designsetgo_not_found'                => 404,
+			'designsetgo_permission_denied'        => 403,
+			'rest_forbidden'                       => 403,
+			'designsetgo_unauthorized'             => 401,
+			'designsetgo_missing_post_id'          => 400,
+			'designsetgo_missing_block_name'       => 400,
+			'designsetgo_missing_settings'         => 400,
+			'designsetgo_missing_animation'        => 400,
+			'designsetgo_missing_faqs'             => 400,
+			'designsetgo_missing_css'              => 400,
+			'designsetgo_missing_operations'       => 400,
+			'designsetgo_missing_block_identifier' => 400,
+			'designsetgo_missing_attributes'       => 400,
+			'designsetgo_invalid_input'            => 400,
+			'designsetgo_validation_failed'        => 400,
+			'designsetgo_block_name_mismatch'      => 400,
 		);
 
 		return $status_map[ $code ] ?? 400; // Default to Bad Request.
@@ -297,7 +341,7 @@ abstract class Abstract_Ability {
 					$valid = rest_validate_value_from_schema( $value, $schema['properties'][ $key ], $key );
 					if ( is_wp_error( $valid ) ) {
 						return $this->error(
-							'validation_failed',
+							'designsetgo_validation_failed',
 							$valid->get_error_message(),
 							array( 'field' => $key )
 						);

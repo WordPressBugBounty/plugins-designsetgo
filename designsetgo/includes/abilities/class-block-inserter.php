@@ -39,7 +39,7 @@ class Block_Inserter {
 		$post = get_post( $post_id );
 		if ( ! $post ) {
 			return new WP_Error(
-				'invalid_post',
+				'designsetgo_invalid_post',
 				__( 'Post not found.', 'designsetgo' ),
 				array( 'status' => 404 )
 			);
@@ -48,7 +48,7 @@ class Block_Inserter {
 		// Check permissions.
 		if ( ! current_user_can( 'edit_post', $post_id ) ) {
 			return new WP_Error(
-				'permission_denied',
+				'designsetgo_permission_denied',
 				__( 'You do not have permission to edit this post.', 'designsetgo' ),
 				array( 'status' => 403 )
 			);
@@ -1250,12 +1250,28 @@ class Block_Inserter {
 				$nav_position            = isset( $attributes['navigationPosition'] ) ? $attributes['navigationPosition'] : 'sides';
 				$width                   = isset( $attributes['width'] ) ? $attributes['width'] : '600px';
 				$max_width               = isset( $attributes['maxWidth'] ) ? $attributes['maxWidth'] : '90vw';
-				$overlay_color           = isset( $attributes['overlayColor'] ) ? trim( (string) $attributes['overlayColor'] ) : '';
-				$overlay_opacity         = isset( $attributes['overlayOpacity'] ) ? floatval( $attributes['overlayOpacity'] ) : 80;
-				$overlay_blur            = isset( $attributes['overlayBlur'] ) ? intval( $attributes['overlayBlur'] ) : 0;
-				$show_close_button       = isset( $attributes['showCloseButton'] ) ? $attributes['showCloseButton'] : true;
-				$close_button_position   = isset( $attributes['closeButtonPosition'] ) ? $attributes['closeButtonPosition'] : 'inside-top-right';
-				$close_button_size       = isset( $attributes['closeButtonSize'] ) ? intval( $attributes['closeButtonSize'] ) : 24;
+				$display_mode            = isset( $attributes['displayMode'] ) ? $attributes['displayMode'] : 'dialog';
+				$panel_edge              = isset( $attributes['panelEdge'] ) ? $attributes['panelEdge'] : 'right';
+				// Mirror save.js: clamp to a known edge, or the emitted class
+				// matches no CSS rule and the panel floats mid-viewport.
+				if ( ! in_array( $panel_edge, array( 'left', 'right', 'top', 'bottom' ), true ) ) {
+					$panel_edge = 'right';
+				}
+				$panel_size = isset( $attributes['panelSize'] ) ? (string) $attributes['panelSize'] : '24rem';
+				// Mirror save.js: allow-list a single plain CSS length. This is
+				// interpolated into `--dsgo-panel-size:<value>`, and esc_attr()
+				// stops an attribute break-out but not a `;` that appends
+				// further declarations to the modal root.
+				if ( ! preg_match( '/^(0|\d+(\.\d+)?(px|rem|em|%|vw|vh|vmin|vmax|ch|ex|pt|pc|cm|mm|in))$/', $panel_size ) ) {
+					$panel_size = '24rem';
+				}
+				$is_panel              = 'panel' === $display_mode;
+				$overlay_color         = isset( $attributes['overlayColor'] ) ? trim( (string) $attributes['overlayColor'] ) : '';
+				$overlay_opacity       = isset( $attributes['overlayOpacity'] ) ? floatval( $attributes['overlayOpacity'] ) : 80;
+				$overlay_blur          = isset( $attributes['overlayBlur'] ) ? intval( $attributes['overlayBlur'] ) : 0;
+				$show_close_button     = isset( $attributes['showCloseButton'] ) ? $attributes['showCloseButton'] : true;
+				$close_button_position = isset( $attributes['closeButtonPosition'] ) ? $attributes['closeButtonPosition'] : 'inside-top-right';
+				$close_button_size     = isset( $attributes['closeButtonSize'] ) ? intval( $attributes['closeButtonSize'] ) : 24;
 
 				// Build data attributes.
 				$data_attrs  = ' data-dsgo-modal="true"';
@@ -1299,8 +1315,13 @@ class Block_Inserter {
 					$overlay_style .= ';backdrop-filter:blur(' . $overlay_blur . 'px)';
 				}
 
-				// Content styles.
-				$content_style = 'border-style:none;border-width:0px;width:' . esc_attr( $width ) . ';max-width:' . esc_attr( $max_width );
+				// Content styles. In panel mode save.js passes no dimensions to
+				// transferStylesToContent(), because the panel is sized by
+				// panelSize on the dialog — so no width/max-width is written.
+				$content_style = 'border-style:none;border-width:0px';
+				if ( ! $is_panel ) {
+					$content_style .= ';width:' . esc_attr( $width ) . ';max-width:' . esc_attr( $max_width );
+				}
 
 				// Close button HTML.
 				$close_button_html = '';
@@ -1314,7 +1335,16 @@ class Block_Inserter {
 
 				$close_button_is_inside = strpos( $close_button_position, 'inside-' ) === 0;
 
+				// Off-canvas panel mode. save() appends these to the root class
+				// list and writes --dsgo-panel-size as a style AFTER the class
+				// attribute; mirror both exactly or the block fails validation
+				// on first edit.
 				$outer_class = 'wp-block-designsetgo-modal dsgo-modal';
+				$panel_style = '';
+				if ( $is_panel ) {
+					$outer_class .= ' dsgo-modal--panel dsgo-modal--panel-' . $panel_edge;
+					$panel_style  = ' style="' . esc_attr( '--dsgo-panel-size:' . $panel_size ) . '"';
+				}
 
 				$inner_html  = '<div class="dsgo-modal__backdrop" style="' . esc_attr( $overlay_style ) . '" aria-hidden="true"></div>';
 				$inner_html .= '<div class="dsgo-modal__dialog">';
@@ -1334,7 +1364,7 @@ class Block_Inserter {
 				$id_attr = '' !== $modal_id ? ' id="' . esc_attr( $modal_id ) . '"' : '';
 
 				return array(
-					'opening' => '<div' . $id_attr . ' role="dialog" aria-modal="true" aria-label="Modal" aria-hidden="true"' . $data_attrs . ' class="' . esc_attr( $outer_class ) . '">' . $inner_html,
+					'opening' => '<div' . $id_attr . ' role="dialog" aria-modal="true" aria-label="Modal" aria-hidden="true"' . $data_attrs . ' class="' . esc_attr( $outer_class ) . '"' . $panel_style . '>' . $inner_html,
 					'closing' => $closing_html,
 				);
 
@@ -2547,7 +2577,7 @@ class Block_Inserter {
 		foreach ( $inner_blocks as $index => $block ) {
 			if ( ! isset( $block['name'] ) || ! is_string( $block['name'] ) ) {
 				return new WP_Error(
-					'invalid_inner_block',
+					'designsetgo_invalid_inner_block',
 					sprintf(
 						/* translators: %d: Block index */
 						__( 'Inner block at index %d is missing a valid name.', 'designsetgo' ),
@@ -2558,7 +2588,7 @@ class Block_Inserter {
 
 			if ( isset( $block['attributes'] ) && ! is_array( $block['attributes'] ) ) {
 				return new WP_Error(
-					'invalid_inner_block_attributes',
+					'designsetgo_invalid_inner_block_attributes',
 					sprintf(
 						/* translators: %d: Block index */
 						__( 'Inner block at index %d has invalid attributes (must be an array).', 'designsetgo' ),
@@ -2569,7 +2599,7 @@ class Block_Inserter {
 
 			if ( isset( $block['innerBlocks'] ) && ! is_array( $block['innerBlocks'] ) ) {
 				return new WP_Error(
-					'invalid_nested_blocks',
+					'designsetgo_invalid_nested_blocks',
 					sprintf(
 						/* translators: %d: Block index */
 						__( 'Inner block at index %d has invalid innerBlocks (must be an array).', 'designsetgo' ),

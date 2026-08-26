@@ -13,6 +13,25 @@ require_once __DIR__ . '/chart-colors.php';
 require_once __DIR__ . '/chart-series.php';
 require_once __DIR__ . '/chart-axis.php';
 
+if ( ! function_exists( 'designsetgo_chart_value_format' ) ) {
+	/**
+	 * Read the value-formatting attributes into the shape the formatter takes.
+	 *
+	 * Kept separate from the geometry so the data table, which has no
+	 * geometry context, can build the same bag from the same attributes.
+	 *
+	 * @param array $attributes Block attributes.
+	 * @return array Format options for designsetgo_chart_format_value().
+	 */
+	function designsetgo_chart_value_format( array $attributes ) {
+		return array(
+			'prefix' => isset( $attributes['valuePrefix'] ) ? (string) $attributes['valuePrefix'] : '',
+			'suffix' => isset( $attributes['valueSuffix'] ) ? (string) $attributes['valueSuffix'] : '',
+			'group'  => ! empty( $attributes['groupThousands'] ),
+		);
+	}
+}
+
 if ( ! function_exists( 'designsetgo_chart_geometry' ) ) {
 	/**
 	 * Build the geometry context for a chart.
@@ -29,10 +48,10 @@ if ( ! function_exists( 'designsetgo_chart_geometry' ) ) {
 	function designsetgo_chart_geometry( array $attributes, array $rows, $has_grid, $type = 'bar' ) {
 		$height      = max( 80, min( 800, (int) ( isset( $attributes['height'] ) ? $attributes['height'] : 240 ) ) );
 		$show_values = ! isset( $attributes['showValues'] ) || (bool) $attributes['showValues'];
-		$pad_left    = $has_grid ? 44 : 0;
 		$pad_top     = $show_values ? 18 : 0;
 		$bounds      = designsetgo_chart_bounds( wp_list_pluck( $rows, 'value' ) );
 		$tick_count  = 5;
+		$format      = designsetgo_chart_value_format( $attributes );
 
 		// Reserve room under the plot for the x-axis category labels, but only
 		// when there is something to write there.
@@ -49,6 +68,22 @@ if ( ! function_exists( 'designsetgo_chart_geometry' ) ) {
 			$tick_count = $nice['count'];
 		}
 
+		// Size the left gutter to the labels that will actually be drawn.
+		// Formatting can widen a tick well past the old fixed 44 ("1000000"
+		// becomes "$1,000,000"), and the canvas does not clip, so a gutter
+		// that is too narrow paints the axis outside the block.
+		$pad_left = 0;
+
+		if ( $has_grid ) {
+			$labels = array();
+
+			foreach ( designsetgo_chart_ticks( $bounds['min'], $bounds['max'], $tick_count ) as $tick ) {
+				$labels[] = designsetgo_chart_format_value( $tick, $format );
+			}
+
+			$pad_left = designsetgo_chart_tick_gutter( $labels );
+		}
+
 		return array(
 			'width'       => 600,
 			'height'      => $height,
@@ -61,6 +96,7 @@ if ( ! function_exists( 'designsetgo_chart_geometry' ) ) {
 			'max'         => $bounds['max'],
 			'tick_count'  => $tick_count,
 			'show_values' => $show_values,
+			'format'      => $format,
 		);
 	}
 }
@@ -160,7 +196,7 @@ if ( ! function_exists( 'designsetgo_render_chart' ) ) {
 			(int) $geo['height'],
 			$svg, // Every interpolation above is individually escaped.
 			$legend,
-			designsetgo_chart_data_table( $rows, $label, $disclosed )
+			designsetgo_chart_data_table( $rows, $label, $disclosed, designsetgo_chart_value_format( $attributes ) )
 		);
 	}
 }

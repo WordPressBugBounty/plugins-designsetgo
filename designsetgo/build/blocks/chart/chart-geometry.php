@@ -261,20 +261,116 @@ if ( ! function_exists( 'designsetgo_chart_nice_bounds' ) ) {
 	}
 }
 
+if ( ! function_exists( 'designsetgo_chart_text_width' ) ) {
+	/**
+	 * Estimate how wide a string paints, in SVG user units.
+	 *
+	 * The SVG is built on the server, so there is nothing to measure against
+	 * -- the width has to be predicted from the characters. Digits, letters
+	 * and currency symbols are treated as one width and separators as a
+	 * narrower one, which is the only distinction that matters for axis
+	 * labels.
+	 *
+	 * Calibrated against the rendered output at font-size 14: "$0" measures
+	 * 16.2 user units and "$2,000,000" measures 71.9. The ratios below round
+	 * slightly high on purpose. Over-reserving costs a few units of plot
+	 * width; under-reserving paints the label outside the block.
+	 *
+	 * @param string $text      Text to measure.
+	 * @param float  $font_size Font size in user units. Matches the 14 the
+	 *                          stylesheet sets on .dsgo-chart__tick.
+	 * @return float Estimated width in user units.
+	 */
+	function designsetgo_chart_text_width( $text, $font_size = 14 ) {
+		$narrow = array( ',', '.', ' ', "'", ':', '|', 'i', 'l', 'I', 'j', 't', 'f', 'r' );
+		$width  = 0.0;
+
+		foreach ( preg_split( '//u', (string) $text, -1, PREG_SPLIT_NO_EMPTY ) as $char ) {
+			$width += in_array( $char, $narrow, true ) ? 0.30 : 0.60;
+		}
+
+		return $width * (float) $font_size;
+	}
+}
+
+if ( ! function_exists( 'designsetgo_chart_tick_gutter' ) ) {
+	/**
+	 * Width to reserve left of the plot for the y-axis tick labels.
+	 *
+	 * The labels are drawn 8 units left of the plot edge, anchored at their
+	 * end, so the gutter has to cover the widest label plus that gap. A fixed
+	 * 44 used to be assumed, which was enough for a bare "1000" and not for a
+	 * formatted "$2,000,000" -- and because .dsgo-chart__canvas is
+	 * `overflow: visible`, the excess was painted outside the block rather
+	 * than clipped.
+	 *
+	 * Clamped at both ends: never below the historic 44, so charts with short
+	 * labels keep the proportions they have always had, and never above 240,
+	 * so an outlandish prefix cannot squeeze the plot out of existence.
+	 *
+	 * @param array $labels Formatted tick labels.
+	 * @return int Gutter width in user units.
+	 */
+	function designsetgo_chart_tick_gutter( array $labels ) {
+		$widest = 0.0;
+
+		foreach ( $labels as $label ) {
+			$widest = max( $widest, designsetgo_chart_text_width( $label ) );
+		}
+
+		// 8 for the gap the label is offset by, 4 so it never sits flush.
+		return (int) min( 240, max( 44, (int) ceil( $widest ) + 12 ) );
+	}
+}
+
 if ( ! function_exists( 'designsetgo_chart_format_value' ) ) {
 	/**
 	 * Format a value for display, dropping meaningless trailing decimals.
 	 *
-	 * @param float $value Value.
+	 * The optional format options come from the block's valuePrefix,
+	 * valueSuffix and groupThousands attributes. They are threaded through
+	 * `$geo['format']` for the SVG call sites and passed directly to the
+	 * data table. Omitting them entirely reproduces the original output, so
+	 * a caller that does not format (the donut's share-of-total label) can
+	 * keep calling with one argument.
+	 *
+	 * The prefix sits outside the minus sign, because currency is written
+	 * "-$42", never "$-42".
+	 *
+	 * @param float $value  Value.
+	 * @param array $format Optional. prefix (string), suffix (string),
+	 *                      group (bool) to insert thousands separators.
 	 * @return string Display string.
 	 */
-	function designsetgo_chart_format_value( $value ) {
-		$formatted = number_format( (float) $value, 2, '.', '' );
+	function designsetgo_chart_format_value( $value, array $format = array() ) {
+		$value  = (float) $value;
+		$prefix = isset( $format['prefix'] ) ? (string) $format['prefix'] : '';
+		$suffix = isset( $format['suffix'] ) ? (string) $format['suffix'] : '';
+		$group  = ! empty( $format['group'] );
+
+		// Work on the magnitude so the sign can be placed outside the prefix.
+		$rounded   = round( abs( $value ), 2 );
+		$formatted = number_format( $rounded, 2, '.', '' );
 
 		if ( false !== strpos( $formatted, '.' ) ) {
 			$formatted = rtrim( rtrim( $formatted, '0' ), '.' );
 		}
 
-		return '' === $formatted ? '0' : $formatted;
+		if ( '' === $formatted ) {
+			$formatted = '0';
+		}
+
+		if ( $group ) {
+			// Re-format with the locale separators, keeping exactly the
+			// decimals that survived the trim above.
+			$dot       = strpos( $formatted, '.' );
+			$decimals  = false === $dot ? 0 : strlen( $formatted ) - $dot - 1;
+			$formatted = number_format_i18n( $rounded, $decimals );
+		}
+
+		// A value that rounds away to zero is not negative.
+		$sign = ( $value < 0 && $rounded > 0 ) ? '-' : '';
+
+		return $sign . $prefix . $formatted . $suffix;
 	}
 }

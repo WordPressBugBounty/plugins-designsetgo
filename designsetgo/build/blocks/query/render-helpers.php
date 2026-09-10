@@ -289,7 +289,7 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 			'itemTagName'          => 'li',
 			'emitSchema'           => true,
 			'relationshipField'    => '',
-			'relationshipFallback' => 'empty', // empty | all | parent
+			'relationshipFallback' => 'empty', // empty, all, or parent.
 			'groupBy'              => null,
 		);
 		return wp_parse_args( $attributes, $defaults );
@@ -305,7 +305,7 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 	 * Posts with no matching term land in the '__none__' / Uncategorized bucket.
 	 *
 	 * @param int[] $post_ids   Ordered list of post IDs to partition.
-	 * @param array $group_spec { field: string, key: string }
+	 * @param array $group_spec { field: string, key: string }.
 	 * @return array[] Array of groups: each { label: string, value: string, ids: int[] }
 	 */
 	function designsetgo_query_partition_items( array $post_ids, array $group_spec ) {
@@ -320,6 +320,15 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 		}
 		$field = (string) $group_spec['field'];
 		$key   = (string) $group_spec['key'];
+		if ( 'meta' === $field && is_protected_meta( $key, 'post' ) ) {
+			return array(
+				array(
+					'label' => __( 'Uncategorized', 'designsetgo' ),
+					'value' => '__none__',
+					'ids'   => array_map( 'absint', $post_ids ),
+				),
+			);
+		}
 
 		$groups = array();
 		foreach ( $post_ids as $pid ) {
@@ -628,6 +637,12 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 	 *                                                      block comment strings). The
 	 *                                                      helper splits them here.
 	 *                          - params     (array)        URL filter params.
+	 *                          - refresh_source_post_id (int|null) Post whose
+	 *                                                      content holds the query
+	 *                                                      (0 outside post content),
+	 *                                                      or null to emit no signed
+	 *                                                      refresh source (editor
+	 *                                                      preview, tests).
 	 *                          - wrapper_attrs (string|null) Pre-computed
 	 *                                                      get_block_wrapper_attributes()
 	 *                                                      string (first-paint only;
@@ -638,11 +653,12 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 		$context = wp_parse_args(
 			$context,
 			array(
-				'query_id'      => '',
-				'page'          => 1,
-				'inner_html'    => '',
-				'params'        => array(),
-				'wrapper_attrs' => null,
+				'query_id'               => '',
+				'page'                   => 1,
+				'inner_html'             => '',
+				'params'                 => array(),
+				'refresh_source_post_id' => null,
+				'wrapper_attrs'          => null,
 			)
 		);
 
@@ -659,7 +675,8 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 			(int) $context['page'],
 			$query_id,
 			'class="dsgo-query dsgo-query-region dsgo-query--source-' . sanitize_key( (string) ( $attributes['source'] ?? 'posts' ) ) . '"',
-			array()
+			array(),
+			null === $context['refresh_source_post_id'] ? null : absint( $context['refresh_source_post_id'] )
 		);
 
 		// totalPages/totalItems come from the state registry populated during
@@ -687,19 +704,22 @@ if ( ! function_exists( 'designsetgo_query_render_container' ) ) :
 	 * child in tree order so filters/pagination/no-results appear exactly
 	 * where the author placed them.
 	 *
-	 * @param array  $attributes     Raw block attributes.
-	 * @param array  $parsed_children parse_blocks() entries of the block's innerBlocks.
-	 * @param int    $page           Current pagination page.
-	 * @param string $query_id       Sanitized queryId.
-	 * @param string $wrapper_attrs  Pre-computed get_block_wrapper_attributes()
-	 *                               string for the outer element. IAPI attrs
-	 *                               (data-wp-interactive, data-wp-context,
-	 *                               data-dsgo-query-id) are appended here.
-	 * @param array  $base_context   WP_Block context inherited from the outer
-	 *                               render path (passed to each child render).
+	 * @param array    $attributes             Raw block attributes.
+	 * @param array    $parsed_children        parse_blocks() entries of the block's innerBlocks.
+	 * @param int      $page                   Current pagination page.
+	 * @param string   $query_id               Sanitized queryId.
+	 * @param string   $wrapper_attrs          Pre-computed get_block_wrapper_attributes()
+	 *                                         string for the outer element. IAPI attrs
+	 *                                         (data-wp-interactive, data-wp-context,
+	 *                                         data-dsgo-query-id) are appended here.
+	 * @param array    $base_context           WP_Block context inherited from the outer
+	 *                                         render path (passed to each child render).
+	 * @param int|null $refresh_source_post_id Post whose content holds the query
+	 *                                         (0 outside post content) for the signed
+	 *                                         refresh source, or null to emit none.
 	 * @return string Full HTML for the outer element, including children.
 	 */
-	function designsetgo_query_render_container( array $attributes, array $parsed_children, $page, $query_id, $wrapper_attrs, array $base_context = array() ) {
+	function designsetgo_query_render_container( array $attributes, array $parsed_children, $page, $query_id, $wrapper_attrs, array $base_context = array(), $refresh_source_post_id = null ) {
 		$attributes = designsetgo_query_defaults( $attributes );
 		$source     = sanitize_key( (string) ( $attributes['source'] ?? 'posts' ) );
 
@@ -829,7 +849,7 @@ if ( ! function_exists( 'designsetgo_query_render_container' ) ) :
 			// REST call still returns a usable region.
 			if ( ! $results_child ) {
 				$children_html_direct = (string) $result['html'];
-				$blobs                = designsetgo_query_render_blobs( $query_id, $attributes, $parsed_children );
+				$blobs                = designsetgo_query_render_blobs( $query_id, $attributes, $parsed_children, $refresh_source_post_id );
 				$status               = sprintf(
 					'<div role="status" aria-live="polite" aria-atomic="true" class="screen-reader-text dsgo-query__status" data-dsgo-query-status="%1$s" data-dsgo-total-items="%2$d"></div>',
 					esc_attr( $query_id ),
@@ -842,7 +862,7 @@ if ( ! function_exists( 'designsetgo_query_render_container' ) ) :
 						'page'    => (int) $page,
 						'busy'    => false,
 						'restUrl' => esc_url_raw( rest_url( 'designsetgo/v1/query/render' ) ),
-						'nonce'   => wp_create_nonce( 'wp_rest' ),
+						'nonce'   => designsetgo_query_rest_nonce(),
 					),
 					JSON_HEX_APOS
 				);
@@ -926,7 +946,7 @@ if ( ! function_exists( 'designsetgo_query_render_container' ) ) :
 				'page'    => (int) $page,
 				'busy'    => false,
 				'restUrl' => esc_url_raw( rest_url( 'designsetgo/v1/query/render' ) ),
-				'nonce'   => wp_create_nonce( 'wp_rest' ),
+				'nonce'   => designsetgo_query_rest_nonce(),
 			),
 			JSON_HEX_APOS
 		);
@@ -940,9 +960,8 @@ if ( ! function_exists( 'designsetgo_query_render_container' ) ) :
 
 		$merged_wrapper = trim( (string) $wrapper_attrs . ' ' . $iapi_attrs );
 
-		// Blobs + status for IAPI refresh. Blobs carry the attrs + serialized
-		// innerBlocks so the REST refresh can rebuild the same region.
-		$blobs  = designsetgo_query_render_blobs( $query_id, $attributes, $parsed_children );
+		// Signed definition the public refresh route renders from.
+		$blobs  = designsetgo_query_render_blobs( $query_id, $attributes, $parsed_children, $refresh_source_post_id );
 		$status = sprintf(
 			'<div role="status" aria-live="polite" aria-atomic="true" class="screen-reader-text dsgo-query__status" data-dsgo-query-status="%1$s" data-dsgo-total-items="%2$d"></div>',
 			esc_attr( $query_id ),
@@ -963,36 +982,54 @@ endif;
 if ( ! function_exists( 'designsetgo_query_render_blobs' ) ) :
 
 	/**
-	 * Build the hidden blobs div (attrs + serialized innerBlocks) embedded
-	 * alongside the query region. Referenced by view.js during filter/sort
-	 * refresh so the REST payload can be reconstructed without a round-trip.
+	 * Build the hidden, signed refresh source embedded in the query region.
 	 *
-	 * @param string $query_id       Sanitized queryId.
-	 * @param array  $attributes     Query block attributes (already defaulted).
-	 * @param array  $parsed_children parse_blocks() entries.
-	 * @return string HTML for the blobs div, or empty string when queryId is empty.
+	 * The view script sends it back verbatim on filter / sort / Load more, and
+	 * the public REST route renders only a definition whose signature verifies
+	 * — see DesignSetGo\Blocks\Query\RefreshSource.
+	 *
+	 * @param string   $query_id        Sanitized queryId.
+	 * @param array    $attributes      Query attributes (already defaulted).
+	 * @param array    $parsed_children parse_blocks() entries of the inner blocks.
+	 * @param int|null $source_post_id  Post whose content holds the query (0
+	 *                                  outside post content), or null for none.
+	 * @return string HTML for the blobs div, or empty string when not emitted.
 	 */
-	function designsetgo_query_render_blobs( $query_id, array $attributes, array $parsed_children ) {
-		if ( '' === $query_id ) {
+	function designsetgo_query_render_blobs( $query_id, array $attributes, array $parsed_children, $source_post_id ) {
+		if ( '' === $query_id || null === $source_post_id || ! class_exists( 'DesignSetGo\\Blocks\\Query\\RefreshSource' ) ) {
 			return '';
 		}
-		$flags = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT;
 
-		$full_inner_html = '';
+		$inner_blocks = '';
 		foreach ( $parsed_children as $child ) {
-			if ( ! empty( $child['blockName'] ) && function_exists( 'serialize_block' ) ) {
-				$full_inner_html .= serialize_block( $child );
+			if ( ! empty( $child['blockName'] ) ) {
+				$inner_blocks .= serialize_block( $child );
 			}
 		}
 
-		return '<div hidden class="dsgo-query__blobs" data-dsgo-blobs-for="' . esc_attr( $query_id ) . '">'
-			. '<script type="application/json" data-dsgo-attrs>'
-			. wp_json_encode( $attributes, $flags )
-			. '</script>'
-			. '<script type="application/json" data-dsgo-inner>'
-			. wp_json_encode( $full_inner_html, $flags )
-			. '</script>'
-			. '</div>';
+		$signed = \DesignSetGo\Blocks\Query\RefreshSource::sign( $query_id, $attributes, $inner_blocks, (int) $source_post_id );
+
+		return '<div hidden class="dsgo-query__blobs" data-dsgo-blobs-for="' . esc_attr( $query_id ) . '"'
+			. ' data-dsgo-refresh-source="' . esc_attr( $signed['source'] ) . '"'
+			. ' data-dsgo-signature="' . esc_attr( $signed['signature'] ) . '"></div>';
+	}
+
+endif;
+
+if ( ! function_exists( 'designsetgo_query_rest_nonce' ) ) :
+
+	/**
+	 * REST nonce for the refresh request — logged-in users only.
+	 *
+	 * A cached page outlives its nonce (12–24h), and core rejects a stale
+	 * X-WP-Nonce with rest_cookie_invalid_nonce before the route's own
+	 * permission check runs. The public route needs no nonce, so visitors get
+	 * none; logged-in users need one so the route can see who they are.
+	 *
+	 * @return string Nonce, or empty string for visitors.
+	 */
+	function designsetgo_query_rest_nonce() {
+		return is_user_logged_in() ? wp_create_nonce( 'wp_rest' ) : '';
 	}
 
 endif;

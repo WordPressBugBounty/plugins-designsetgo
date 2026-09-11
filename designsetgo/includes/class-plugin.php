@@ -583,6 +583,9 @@ class Plugin {
 		$this->load_dependencies();
 		$this->init();
 		add_action( 'admin_init', array( $this, 'maybe_upgrade' ) );
+		add_action( 'admin_notices', array( Admin\SchemaUpgradeNotice::class, 'admin_notice' ) );
+		add_action( 'admin_post_' . Admin\SchemaUpgradeNotice::RETRY_ACTION, array( Admin\SchemaUpgradeNotice::class, 'handle_retry' ) );
+		add_action( 'wp_ajax_' . Admin\SchemaUpgradeNotice::DISMISS_ACTION, array( Admin\SchemaUpgradeNotice::class, 'handle_dismiss' ) );
 	}
 
 	/**
@@ -629,6 +632,8 @@ class Plugin {
 		require_once DESIGNSETGO_PATH . 'includes/dynamic-tags/class-dynamic-tags-bootstrap.php';
 
 		require_once DESIGNSETGO_PATH . 'includes/blocks/query/class-query-filter-index.php';
+		require_once DESIGNSETGO_PATH . 'includes/core/class-schema-upgrader.php';
+		require_once DESIGNSETGO_PATH . 'includes/admin/class-schema-upgrade-notice.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/query/class-query-filter-index-hooks.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/query/class-query-filter-index-rebuilder.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/query/class-query-filter-registry.php';
@@ -819,25 +824,11 @@ class Plugin {
 	 * Running in the constructor caused phpstan analysis failures because
 	 * FilterIndex::install() requires that file at analysis time.
 	 *
-	 * Compares the stored designsetgo_db_version option against
-	 * DESIGNSETGO_VERSION and installs missing schema when the plugin
-	 * moves past a version that introduced a schema change.
+	 * The gate and the failure backoff live in Core\SchemaUpgrader, the
+	 * notice in Admin\SchemaUpgradeNotice; this stays as the hook target.
 	 */
 	public function maybe_upgrade(): void {
-		$stored = get_option( 'designsetgo_db_version', '0.0.0' );
-
-		if ( version_compare( $stored, '2.2.0', '<' ) ) {
-			Blocks\Query\FilterIndex::install();
-			// Only seal the upgrade gate after verifying the table actually
-			// exists. Previously the version was bumped unconditionally, so a
-			// silent dbDelta failure (permissions, disk full, early-load order
-			// quirks) left the option at 2.2.0 with no table, and the gate
-			// never retried on subsequent requests.
-			Blocks\Query\FilterIndex::reset_table_cache();
-			if ( Blocks\Query\FilterIndex::table_exists() ) {
-				update_option( 'designsetgo_db_version', '2.2.0', false );
-			}
-		}
+		Core\SchemaUpgrader::maybe_upgrade();
 	}
 
 	/**

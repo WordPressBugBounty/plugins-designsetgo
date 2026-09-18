@@ -24,6 +24,99 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Block_Configurator {
 
 	/**
+	 * Button label attributes that hold rich text limited to bold and italic.
+	 *
+	 * Only attributes whose save() renders them with RichText.Content (block.json
+	 * `source: html`) and that Block_Inserter emits with wp_kses_post() belong
+	 * here. Anything else would stage markup that save() escapes differently and
+	 * the editor would flag the block as invalid. The labels sit inside an <a> or
+	 * <button>, so they take the narrow allow-list in sanitize_button_label()
+	 * that mirrors the editor's allowedFormats (core/bold, core/italic), never
+	 * links or other interactive content.
+	 *
+	 * @var array<string, array<int, string>>
+	 */
+	private const BUTTON_LABEL_ATTRIBUTES = array(
+		'designsetgo/icon-button'   => array( 'text' ),
+		'designsetgo/modal-trigger' => array( 'text' ),
+	);
+
+	/**
+	 * How each rich-text attribute is sanitized, per block.
+	 *
+	 * The source of truth for WHICH attributes belong here is block.json: an
+	 * attribute with `source: "html"` or `source: "text"` is read back out of
+	 * the markup rather than the block comment, so save() renders it and the
+	 * inserter has to emit it the same way. Abilities_Rich_Text_Policy_Test
+	 * diffs these keys against the live registry in both directions, so a new
+	 * sourced attribute fails until it is classified, and an entry for a
+	 * deleted one fails too.
+	 *
+	 * Three policies:
+	 *
+	 * - 'inline' - the full inline allow-list: links, spans, em/strong/mark/code.
+	 * - 'label'  - the narrow allow-list for text inside an <a> or <button>:
+	 *              strong, em, b, i, br, no attributes. A nested <a> would break
+	 *              parity with save(), which renders the label inside one.
+	 * - 'plain'  - sanitize_text_field(). Correct for `source: "text"`, where
+	 *              RichText stores TEXT and save() escapes it on the way out.
+	 *
+	 * Getting this wrong is invisible to block validation. For a `source: html`
+	 * attribute the value lives in the MARKUP, so stripping the tags here means
+	 * the parser reads the attribute back stripped, save() reproduces exactly
+	 * that, and the block is perfectly valid - with the author's formatting
+	 * silently gone. `Care <em>begins</em>` shipped as `Care begins` that way.
+	 * Only Abilities_Rich_Text_Fidelity_Test can see it.
+	 *
+	 * @var array<string, array<string, string>>
+	 */
+	private const RICH_TEXT_ATTRIBUTES = array(
+		'designsetgo/accordion-item'    => array( 'title' => 'inline' ),
+		'designsetgo/card'              => array(
+			// badgeText is `source: text`, so it is plain by definition.
+			'badgeText' => 'plain',
+			'title'     => 'inline',
+			'subtitle'  => 'inline',
+			'bodyText'  => 'inline',
+		),
+		'designsetgo/countdown-timer'   => array( 'completionMessage' => 'plain' ),
+		'designsetgo/counter'           => array( 'label' => 'plain' ),
+		'designsetgo/form-builder'      => array( 'submitButtonText' => 'plain' ),
+		'designsetgo/heading-segment'   => array( 'content' => 'inline' ),
+		'designsetgo/icon-button'       => array( 'text' => 'label' ),
+		'designsetgo/modal-trigger'     => array( 'text' => 'label' ),
+		'designsetgo/table-of-contents' => array( 'titleText' => 'plain' ),
+		'designsetgo/timeline-item'     => array(
+			'date'  => 'inline',
+			'title' => 'inline',
+		),
+	);
+
+	/**
+	 * The sanitization policy for one attribute, or '' when it has none.
+	 *
+	 * @param string $key        Attribute key.
+	 * @param string $block_name Block the attribute belongs to; empty when unknown.
+	 * @return string One of 'inline', 'label', 'plain', or '' when unlisted.
+	 */
+	public static function rich_text_policy( string $key, string $block_name ): string {
+		if ( '' === $block_name ) {
+			return '';
+		}
+
+		return (string) ( self::RICH_TEXT_ATTRIBUTES[ $block_name ][ $key ] ?? '' );
+	}
+
+	/**
+	 * Every block with a declared rich-text policy.
+	 *
+	 * @return array<string, array<string, string>>
+	 */
+	public static function rich_text_policies(): array {
+		return self::RICH_TEXT_ATTRIBUTES;
+	}
+
+	/**
 	 * Update block attributes by block name or client ID.
 	 *
 	 * @param int                  $post_id Post ID.
@@ -210,13 +303,39 @@ class Block_Configurator {
 	 * Sanitize configuration attributes.
 	 *
 	 * @param array<string, mixed> $attributes Attributes to sanitize.
+	 * @param string               $block_name Optional. Block the attributes belong to. Enables
+	 *                                         block-specific button label keys (see
+	 *                                         BUTTON_LABEL_ATTRIBUTES); omit when unknown.
 	 * @return array<string, mixed> Sanitized attributes.
 	 */
-	public static function sanitize_attributes( array $attributes ): array {
+	public static function sanitize_attributes( array $attributes, string $block_name = '' ): array {
 		$sanitized = array();
 
 		foreach ( $attributes as $key => $value ) {
 			if ( is_string( $value ) ) {
+				// RichText content is HTML. Preserve safe inline markup and explicit
+				// breaks without decoding escaped text into executable markup.
+				// A declared per-block policy wins over the generic key list,
+				// because the same key is rich on one block and plain on
+				// another.
+				$policy = self::rich_text_policy( (string) $key, $block_name );
+
+				if ( 'label' === $policy || self::is_button_label_attribute( (string) $key, $block_name ) ) {
+					$sanitized[ $key ] = self::sanitize_button_label( $value );
+					continue;
+				}
+				if ( 'inline' === $policy ) {
+					$sanitized[ $key ] = self::sanitize_inline_text( $value );
+					continue;
+				}
+				// `content`, `caption` and `citation` stay generic: they are
+				// core's own rich-text keys (paragraph, image, quote) and reach
+				// this code for blocks outside the DesignSetGo namespace, which
+				// the per-block table deliberately does not cover.
+				if ( '' === $policy && self::is_inline_text_attribute( (string) $key ) ) {
+					$sanitized[ $key ] = self::sanitize_inline_text( $value );
+					continue;
+				}
 				// Decode HTML entities BEFORE stripping tags to catch encoded attacks.
 				// e.g., &lt;script&gt; becomes <script> which can then be stripped.
 				// Decode twice to defend against double-encoding attacks.
@@ -240,9 +359,13 @@ class Block_Configurator {
 					// defense-in-depth, not dead code.
 					$sanitized[ $key ] = sanitize_textarea_field( $decoded );
 				} else {
-					$sanitized[ $key ] = sanitize_text_field( $decoded );
+					$clean = sanitize_text_field( $decoded );
+
+					$sanitized[ $key ] = $clean;
 				}
 			} elseif ( is_array( $value ) ) {
+				// Nested values are not top-level block attributes, so the
+				// block-specific rich-text keys do not apply to them.
 				$sanitized[ $key ] = self::sanitize_attributes( $value );
 			} elseif ( is_bool( $value ) || is_int( $value ) || is_float( $value ) || is_null( $value ) ) {
 				$sanitized[ $key ] = $value;
@@ -250,6 +373,118 @@ class Block_Configurator {
 		}
 
 		return $sanitized;
+	}
+
+	/**
+	 * Sanitize an inline rich-text value.
+	 *
+	 * The allow-list mirrors what RichText formats emit and what Block_Inserter's
+	 * downstream wp_kses_post() keeps, so staged markup is not altered a second
+	 * time: links keep class, id, target, aria-* and data-* hooks that page CSS
+	 * and scripts target. `style` and event handlers are never allowed, and
+	 * wp_kses() filters href through wp_allowed_protocols(), which excludes
+	 * `javascript:` and `data:`.
+	 *
+	 * @param string $value Raw rich-text HTML.
+	 * @return string Sanitized HTML.
+	 */
+	private static function sanitize_inline_text( string $value ): string {
+		$hooks = array(
+			'class'  => true,
+			'id'     => true,
+			'data-*' => true,
+		);
+
+		$allowed = array_fill_keys( array( 'br', 'b', 'i', 's', 'sub', 'sup' ), array() );
+		foreach ( array( 'em', 'strong', 'mark', 'code' ) as $tag ) {
+			$allowed[ $tag ] = array( 'class' => true );
+		}
+		$allowed['span'] = $hooks + array( 'aria-hidden' => true );
+		$allowed['a']    = $hooks + array(
+			'href'             => true,
+			'title'            => true,
+			'rel'              => true,
+			'target'           => true,
+			'aria-label'       => true,
+			'aria-current'     => true,
+			'aria-describedby' => true,
+		);
+
+		$clean = wp_kses( wp_check_invalid_utf8( $value ), $allowed );
+		$clean = self::finalize_inline_markup( $clean );
+
+		return (string) preg_replace( '/^\s+|\s+$/u', ' ', $clean );
+	}
+
+	/**
+	 * Sanitize a button label (icon-button / modal-trigger `text`).
+	 *
+	 * The editor RichText for these labels allows only core/bold and core/italic
+	 * (plus Shift+Enter line breaks), and the label renders inside an <a> or
+	 * <button>. A nested link would be re-parented by the HTML parser, so the
+	 * `source: html` attribute would no longer match save() and the block would
+	 * be invalid. Tags carry no attributes, and edge whitespace is trimmed as
+	 * sanitize_text_field() did before labels kept markup.
+	 *
+	 * @param string $value Raw label HTML.
+	 * @return string Sanitized label HTML.
+	 */
+	private static function sanitize_button_label( string $value ): string {
+		$allowed = array_fill_keys( array( 'strong', 'em', 'b', 'i', 'br' ), array() );
+		$clean   = wp_kses( wp_check_invalid_utf8( $value ), $allowed );
+
+		return (string) preg_replace( '/^\s+|\s+$/u', '', $clean );
+	}
+
+	/**
+	 * Remove Interactivity API directives and add `noopener` to new-tab links.
+	 *
+	 * The kses `data-*` wildcard also admits `data-wp-*` directives, which the
+	 * Interactivity runtime hydrates on any page that loads it: `bind--href`
+	 * can assign an unsanitized URL and `bind--style` sidesteps the no-style
+	 * rule. Generated inline content never needs them, so every attribute with
+	 * that prefix is dropped; other `data-*` hooks (including plain `data-wp`)
+	 * are kept.
+	 *
+	 * The rel step matches the editor's link format, which adds rel="noopener"
+	 * when "Open in new tab" is chosen. Core's server-side equivalent,
+	 * wp_targeted_link_rel(), is deprecated since 6.7, so it is not called here.
+	 * Existing rel values are kept; noopener is appended only when missing.
+	 *
+	 * @param string $html Sanitized inline HTML.
+	 * @return string Finalized HTML.
+	 */
+	private static function finalize_inline_markup( string $html ): string {
+		if ( false === stripos( $html, 'target' ) && false === stripos( $html, 'data-wp-' ) ) {
+			return $html;
+		}
+
+		$processor = new \WP_HTML_Tag_Processor( $html );
+		while ( $processor->next_tag() ) {
+			foreach ( (array) $processor->get_attribute_names_with_prefix( 'data-wp-' ) as $directive ) {
+				$processor->remove_attribute( $directive );
+			}
+
+			if ( 'A' !== $processor->get_tag() ) {
+				continue;
+			}
+
+			$target = $processor->get_attribute( 'target' );
+			if ( ! is_string( $target ) || '_blank' !== strtolower( $target ) ) {
+				continue;
+			}
+
+			$rel    = $processor->get_attribute( 'rel' );
+			$tokens = is_string( $rel ) ? (array) preg_split( '/\s+/', trim( $rel ), -1, PREG_SPLIT_NO_EMPTY ) : array();
+			if ( in_array( 'noopener', array_map( 'strtolower', $tokens ), true ) ) {
+				continue;
+			}
+
+			$tokens[] = 'noopener';
+			$processor->set_attribute( 'rel', implode( ' ', $tokens ) );
+		}
+
+		return $processor->get_updated_html();
 	}
 
 	/**
@@ -300,6 +535,39 @@ class Block_Configurator {
 		);
 
 		return in_array( $key, $multiline_attrs, true );
+	}
+
+	/**
+	 * Whether an attribute holds inline rich text.
+	 *
+	 * These keep safe inline markup and their edge whitespace instead of going
+	 * through the strip-tags branch. Every attribute that Block_Inserter later
+	 * emits with wp_kses_post() belongs here: sanitize_attributes() runs first
+	 * on every real ability entry point, so an omission strips the formatting
+	 * before markup is generated and leaves the kses call downstream as dead
+	 * code. `caption` is core/image's, `citation` is core/quote's.
+	 *
+	 * Keys that are rich text on some blocks and plain text on others (such as
+	 * `text`) are handled per block by is_button_label_attribute().
+	 *
+	 * @param string $key Attribute key.
+	 * @return bool
+	 */
+	private static function is_inline_text_attribute( string $key ): bool {
+		return in_array( $key, array( 'content', 'caption', 'citation' ), true );
+	}
+
+	/**
+	 * Whether an attribute is a rich-text button label on the given block.
+	 *
+	 * @param string $key        Attribute key.
+	 * @param string $block_name Block the attribute belongs to; empty when unknown.
+	 * @return bool
+	 */
+	private static function is_button_label_attribute( string $key, string $block_name ): bool {
+		return '' !== $block_name
+			&& isset( self::BUTTON_LABEL_ATTRIBUTES[ $block_name ] )
+			&& in_array( $key, self::BUTTON_LABEL_ATTRIBUTES[ $block_name ], true );
 	}
 
 	/**

@@ -54,10 +54,21 @@ class Settings {
 	const LEGACY_REDACTED_PLACEHOLDER = "\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}";
 
 	/**
+	 * Legacy allowlist settings, each mapped to the denylist that replaced it.
+	 *
+	 * See get_saved_settings() for why the allowlists were retired.
+	 */
+	const LEGACY_ALLOWLISTS = array(
+		'enabled_blocks'     => 'disabled_blocks',
+		'enabled_extensions' => 'disabled_extensions',
+	);
+
+	/**
 	 * Constructor
 	 */
 	public function __construct() {
 		add_action( 'rest_api_init', array( $this, 'register_rest_routes' ) );
+		add_action( 'admin_init', array( __CLASS__, 'migrate_legacy_settings' ) );
 	}
 
 	/**
@@ -104,20 +115,22 @@ class Settings {
 		}
 
 		return array(
-			'enabled_blocks'     => array(), // Empty = all enabled.
-			'enabled_extensions' => array(), // Empty = all enabled.
-			'excluded_blocks'    => $excluded_blocks_default,
-			'performance'        => array(
+			// Blocks the site owner switched off. A denylist, so a block added in
+			// a later release registers without anyone having to opt it in.
+			'disabled_blocks'     => array(),
+			'disabled_extensions' => array(), // Same reasoning as disabled_blocks.
+			'excluded_blocks'     => $excluded_blocks_default,
+			'performance'         => array(
 				'conditional_loading' => true,
 				'cache_duration'      => 3600, // 1 hour.
 			),
-			'forms'              => array(
+			'forms'               => array(
 				'enable_honeypot'      => true,
 				'enable_rate_limiting' => true,
 				'enable_email_logging' => false,
 				'retention_days'       => 30,
 			),
-			'animations'         => array(
+			'animations'          => array(
 				'enable_animations'              => true,
 				'default_duration'               => 600,
 				'default_easing'                 => 'ease-in-out',
@@ -126,17 +139,17 @@ class Settings {
 				'block_animations_enabled'       => false,
 				'block_animations'               => array(),
 			),
-			'security'           => array(
+			'security'            => array(
 				'log_ip_addresses' => true,
 				'log_user_agents'  => true,
 				'log_referrers'    => false,
 			),
-			'integrations'       => array(
+			'integrations'        => array(
 				'google_maps_api_key'  => '',
 				'turnstile_site_key'   => '',
 				'turnstile_secret_key' => '',
 			),
-			'sticky_header'      => array(
+			'sticky_header'       => array(
 				'enable'                    => true,
 				'custom_selector'           => '',
 				'z_index'                   => 100,
@@ -154,7 +167,7 @@ class Settings {
 				'background_scroll_opacity' => 100,
 				'text_scroll_color'         => '',
 			),
-			'draft_mode'         => array(
+			'draft_mode'          => array(
 				'enable'                 => true,
 				'show_page_list_actions' => true,
 				'show_page_list_column'  => true,
@@ -162,7 +175,7 @@ class Settings {
 				'auto_save_enabled'      => true,
 				'auto_save_interval'     => 60,
 			),
-			'llms_txt'           => array(
+			'llms_txt'            => array(
 				'enable'            => false,
 				'post_types'        => array( 'page', 'post' ),
 				'description'       => '',
@@ -332,12 +345,121 @@ class Settings {
 			return self::$cached_settings;
 		}
 
-		$saved_settings        = get_option( self::OPTION_NAME, array() );
+		$saved_settings        = self::get_saved_settings();
 		$defaults              = self::get_defaults();
 		self::$cached_settings = wp_parse_args( $saved_settings, $defaults );
 
 		return self::$cached_settings;
 	}
+
+	/**
+	 * Read the stored settings, with legacy allowlists converted.
+	 *
+	 * 2.8.1 and earlier switched blocks and extensions off by saving an
+	 * `enabled_blocks` / `enabled_extensions` allowlist. Once a site had saved
+	 * one, everything added in a later release was missing from it and stayed
+	 * off; for blocks, the editor then reported content using them as
+	 * unsupported. Each is replaced by its denylist (LEGACY_ALLOWLISTS): every
+	 * name in the 2.8.1 catalog the allowlist left out is disabled, which keeps
+	 * exactly what was off before, and anything added since is on.
+	 *
+	 * This is a read, so the conversion happens in memory only; it runs on
+	 * anonymous front-end requests and behind the readonly get-settings
+	 * ability. migrate_legacy_settings() persists it on an administrator's
+	 * next wp-admin request, and update_settings() on the next save.
+	 *
+	 * @return array Stored settings (partial; not merged with defaults).
+	 */
+	private static function get_saved_settings(): array {
+		$saved = get_option( self::OPTION_NAME, array() );
+		if ( ! is_array( $saved ) ) {
+			return array();
+		}
+
+		return self::convert_legacy_allowlists( $saved );
+	}
+
+	/**
+	 * Persist the conversion of legacy allowlists.
+	 *
+	 * Runs on `admin_init` for administrators, so the one write happens in a
+	 * request that is allowed to change settings. Until then each request
+	 * derives the same denylists in memory (see get_saved_settings()); the
+	 * result doesn't depend on when this runs, because the conversion uses the
+	 * catalog frozen at 2.8.1 (legacy-allowlist-catalog.php).
+	 */
+	public static function migrate_legacy_settings(): void {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		$stored = get_option( self::OPTION_NAME, array() );
+		if ( ! is_array( $stored ) ) {
+			return;
+		}
+
+		$converted = self::convert_legacy_allowlists( $stored );
+		if ( $converted !== $stored ) {
+			update_option( self::OPTION_NAME, $converted );
+			self::invalidate_cache();
+		}
+	}
+
+	/**
+	 * Replace each legacy allowlist with its denylist.
+	 *
+	 * @param array $saved Stored settings.
+	 * @return array Converted settings.
+	 */
+	private static function convert_legacy_allowlists( array $saved ): array {
+		foreach ( self::LEGACY_ALLOWLISTS as $allowlist => $denylist ) {
+			if ( ! array_key_exists( $allowlist, $saved ) ) {
+				continue;
+			}
+
+			if ( ! isset( $saved[ $denylist ] ) ) {
+				$saved[ $denylist ] = self::missing_from( (array) $saved[ $allowlist ], self::get_legacy_catalog( $denylist ) );
+			}
+			unset( $saved[ $allowlist ] );
+		}
+
+		return $saved;
+	}
+
+	/**
+	 * Names a legacy allowlist could have held: the catalog as of 2.8.1.
+	 *
+	 * @param string $denylist A value of LEGACY_ALLOWLISTS.
+	 * @return string[]
+	 */
+	public static function get_legacy_catalog( string $denylist ): array {
+		static $catalog = null;
+		if ( null === $catalog ) {
+			$catalog = require __DIR__ . '/legacy-allowlist-catalog.php';
+		}
+
+		return $catalog[ $denylist ] ?? array();
+	}
+
+	/**
+	 * Catalog entries absent from an allowlist.
+	 *
+	 * An empty allowlist meant "all enabled", so it disables nothing.
+	 *
+	 * @param array    $enabled Legacy allowlist.
+	 * @param string[] $catalog Every name the list could hold.
+	 * @return string[] Names to disable.
+	 */
+	private static function missing_from( array $enabled, array $catalog ): array {
+		if ( empty( $enabled ) ) {
+			return array();
+		}
+
+		$enabled = array_map( 'sanitize_text_field', array_filter( $enabled, 'is_string' ) );
+
+		return array_values( array_diff( $catalog, $enabled ) );
+	}
+
 
 	/**
 	 * Invalidate the settings cache.
@@ -377,47 +499,55 @@ class Settings {
 				'args'                => array(
 					// Sanitization for all args is handled centrally in sanitize_settings()
 					// to avoid double-sanitization. Type/description kept for schema docs.
-					'enabled_blocks'     => array(
+					'disabled_blocks'     => array(
 						'type'        => 'array',
-						'description' => __( 'List of enabled block names. Empty array means all enabled.', 'designsetgo' ),
+						'description' => __( 'Block names that are switched off. Every other block is enabled.', 'designsetgo' ),
 					),
-					'enabled_extensions' => array(
+					'enabled_blocks'      => array(
 						'type'        => 'array',
-						'description' => __( 'List of enabled extension names. Empty array means all enabled.', 'designsetgo' ),
+						'description' => __( 'Deprecated: use disabled_blocks. An allowlist; each catalog block it omits is disabled.', 'designsetgo' ),
 					),
-					'excluded_blocks'    => array(
+					'disabled_extensions' => array(
+						'type'        => 'array',
+						'description' => __( 'Extension names that are switched off. Every other extension is enabled.', 'designsetgo' ),
+					),
+					'enabled_extensions'  => array(
+						'type'        => 'array',
+						'description' => __( 'Deprecated: use disabled_extensions. An allowlist; each extension it omits is disabled.', 'designsetgo' ),
+					),
+					'excluded_blocks'     => array(
 						'type'        => 'array',
 						'description' => __( 'Block name patterns excluded from abilities API.', 'designsetgo' ),
 					),
-					'performance'        => array(
+					'performance'         => array(
 						'type'        => 'object',
 						'description' => __( 'Performance settings (conditional_loading, cache_duration).', 'designsetgo' ),
 					),
-					'forms'              => array(
+					'forms'               => array(
 						'type'        => 'object',
 						'description' => __( 'Form settings (enable_honeypot, enable_rate_limiting, enable_email_logging, retention_days).', 'designsetgo' ),
 					),
-					'animations'         => array(
+					'animations'          => array(
 						'type'        => 'object',
 						'description' => __( 'Animation settings (enable_animations, default_duration, default_easing, respect_prefers_reduced_motion).', 'designsetgo' ),
 					),
-					'security'           => array(
+					'security'            => array(
 						'type'        => 'object',
 						'description' => __( 'Security logging settings (log_ip_addresses, log_user_agents, log_referrers).', 'designsetgo' ),
 					),
-					'integrations'       => array(
+					'integrations'        => array(
 						'type'        => 'object',
 						'description' => __( 'Third-party integration keys (google_maps_api_key, turnstile_site_key, turnstile_secret_key).', 'designsetgo' ),
 					),
-					'sticky_header'      => array(
+					'sticky_header'       => array(
 						'type'        => 'object',
 						'description' => __( 'Sticky header configuration.', 'designsetgo' ),
 					),
-					'draft_mode'         => array(
+					'draft_mode'          => array(
 						'type'        => 'object',
 						'description' => __( 'Draft mode settings (enable, show_page_list_actions, etc.).', 'designsetgo' ),
 					),
-					'llms_txt'           => array(
+					'llms_txt'            => array(
 						'type'        => 'object',
 						'description' => __( 'llms.txt settings (enable, post_types).', 'designsetgo' ),
 					),
@@ -597,19 +727,44 @@ class Settings {
 	 * before invoking it. The REST endpoint and update-settings ability
 	 * both gate on manage_options before calling through.
 	 *
+	 * List fields (`disabled_blocks`, `llms_txt.post_types`, …) are replaced
+	 * wholesale by whatever is submitted, so an empty array clears one.
+	 *
+	 * Legacy `enabled_blocks` / `enabled_extensions` allowlists are still
+	 * accepted from older clients and converted to their denylists; see
+	 * get_saved_settings().
+	 *
 	 * @param array $input Raw settings to apply (partial, nested).
 	 * @return array Current settings after the update.
 	 */
 	public static function update_settings( array $input ): array {
+		foreach ( self::LEGACY_ALLOWLISTS as $allowlist => $denylist ) {
+			if ( isset( $input[ $allowlist ] ) && ! isset( $input[ $denylist ] ) ) {
+				$input[ $denylist ] = self::missing_from( (array) $input[ $allowlist ], self::get_legacy_catalog( $denylist ) );
+			}
+			unset( $input[ $allowlist ] );
+		}
+
 		$sanitized = self::sanitize_settings( $input );
 
-		$existing = get_option( self::OPTION_NAME, array() );
+		$existing = self::get_saved_settings();
 		$merged   = array_replace_recursive( $existing, $sanitized );
 
-		// List fields must be replaced wholesale — array_replace_recursive
-		// merges lists by numeric index, which would strand stale entries.
-		if ( isset( $sanitized['animations']['block_animations'] ) ) {
-			$merged['animations']['block_animations'] = $sanitized['animations']['block_animations'];
+		// array_replace_recursive() merges lists by numeric index: a shorter
+		// list keeps the old tail and an empty one changes nothing. Put the
+		// submitted lists back as sent.
+		foreach ( self::get_sanitization_schema() as $key => $field_schema ) {
+			if ( is_string( $field_schema ) ) {
+				if ( self::is_list_sanitizer( $field_schema ) && isset( $sanitized[ $key ] ) ) {
+					$merged[ $key ] = $sanitized[ $key ];
+				}
+				continue;
+			}
+			foreach ( $field_schema as $field_key => $sanitizer ) {
+				if ( self::is_list_sanitizer( $sanitizer ) && isset( $sanitized[ $key ][ $field_key ] ) ) {
+					$merged[ $key ][ $field_key ] = $sanitized[ $key ][ $field_key ];
+				}
+			}
 		}
 
 		update_option( self::OPTION_NAME, $merged );
@@ -644,17 +799,21 @@ class Settings {
 	public function get_stats_endpoint() {
 		global $wpdb;
 
-		$settings     = self::get_settings();
-		$all_blocks   = self::get_available_blocks();
-		$total_blocks = 0;
+		$settings      = self::get_settings();
+		$all_blocks    = self::get_available_blocks();
+		$total_blocks  = 0;
+		$catalog_names = array();
 
 		// Count total blocks.
 		foreach ( $all_blocks as $category ) {
 			$total_blocks += count( $category['blocks'] );
+			$catalog_names = array_merge( $catalog_names, wp_list_pluck( $category['blocks'], 'name' ) );
 		}
 
-		// Count enabled blocks.
-		$enabled_blocks = empty( $settings['enabled_blocks'] ) ? $total_blocks : count( $settings['enabled_blocks'] );
+		// Count enabled blocks. Only catalog names count, so a stale entry for a
+		// block that no longer exists can't push the total down.
+		$disabled_count = count( array_intersect( $catalog_names, (array) $settings['disabled_blocks'] ) );
+		$enabled_blocks = $total_blocks - $disabled_count;
 
 		// Count form submissions (with caching).
 		$form_submissions = get_transient( 'dsgo_form_submissions_count' );
@@ -707,20 +866,20 @@ class Settings {
 	 */
 	private static function get_sanitization_schema(): array {
 		return array(
-			'enabled_blocks'     => 'text_list',
-			'enabled_extensions' => 'text_list',
-			'excluded_blocks'    => 'text_list',
-			'performance'        => array(
+			'disabled_blocks'     => 'text_list',
+			'disabled_extensions' => 'text_list',
+			'excluded_blocks'     => 'text_list',
+			'performance'         => array(
 				'conditional_loading' => 'bool',
 				'cache_duration'      => 'absint',
 			),
-			'forms'              => array(
+			'forms'               => array(
 				'enable_honeypot'      => 'bool',
 				'enable_rate_limiting' => 'bool',
 				'enable_email_logging' => 'bool',
 				'retention_days'       => 'absint',
 			),
-			'animations'         => array(
+			'animations'          => array(
 				'enable_animations'              => 'bool',
 				'default_duration'               => 'absint',
 				'default_easing'                 => 'text',
@@ -729,17 +888,17 @@ class Settings {
 				'block_animations_enabled'       => 'bool',
 				'block_animations'               => 'block_animations',
 			),
-			'security'           => array(
+			'security'            => array(
 				'log_ip_addresses' => 'bool',
 				'log_user_agents'  => 'bool',
 				'log_referrers'    => 'bool',
 			),
-			'integrations'       => array(
+			'integrations'        => array(
 				'google_maps_api_key'  => 'text',
 				'turnstile_site_key'   => 'text',
 				'turnstile_secret_key' => 'text',
 			),
-			'sticky_header'      => array(
+			'sticky_header'       => array(
 				'enable'                    => 'bool',
 				'custom_selector'           => 'css_selector',
 				'z_index'                   => 'absint',
@@ -757,7 +916,7 @@ class Settings {
 				'background_scroll_opacity' => 'absint',
 				'text_scroll_color'         => 'hex_color',
 			),
-			'draft_mode'         => array(
+			'draft_mode'          => array(
 				'enable'                 => 'bool',
 				'show_page_list_actions' => 'bool',
 				'show_page_list_column'  => 'bool',
@@ -765,13 +924,24 @@ class Settings {
 				'auto_save_enabled'      => 'bool',
 				'auto_save_interval'     => 'absint',
 			),
-			'llms_txt'           => array(
+			'llms_txt'            => array(
 				'enable'            => 'bool',
 				'post_types'        => 'key_list',
 				'description'       => 'textarea',
 				'generate_full_txt' => 'bool',
 			),
 		);
+	}
+
+	/**
+	 * Whether a sanitizer type produces a list, which update_settings()
+	 * must replace wholesale rather than merge by index.
+	 *
+	 * @param string $sanitizer Sanitizer type from get_sanitization_schema().
+	 * @return bool
+	 */
+	private static function is_list_sanitizer( string $sanitizer ): bool {
+		return in_array( $sanitizer, array( 'text_list', 'key_list', 'block_animations' ), true );
 	}
 
 	/**
@@ -800,9 +970,9 @@ class Settings {
 			case 'key':
 				return sanitize_key( $value );
 			case 'text_list':
-				return is_array( $value ) ? array_map( 'sanitize_text_field', $value ) : $fallback;
+				return is_array( $value ) ? array_values( array_map( 'sanitize_text_field', $value ) ) : $fallback;
 			case 'key_list':
-				return is_array( $value ) ? array_map( 'sanitize_key', $value ) : $fallback;
+				return is_array( $value ) ? array_values( array_map( 'sanitize_key', $value ) ) : $fallback;
 			case 'block_animations':
 				return self::sanitize_block_animations_list( is_array( $value ) ? $value : array() );
 			default:
@@ -1016,7 +1186,7 @@ class Settings {
 				continue;
 			}
 
-			// Top-level list fields (enabled_blocks, enabled_extensions, excluded_blocks).
+			// Top-level list fields (disabled_blocks, disabled_extensions, excluded_blocks).
 			if ( is_string( $field_schema ) ) {
 				$sanitized[ $key ] = self::sanitize_value(
 					$settings[ $key ],

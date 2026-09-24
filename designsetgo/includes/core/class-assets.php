@@ -114,7 +114,7 @@ class Assets {
 	/**
 	 * Localize DesignSetGo settings for the block extension bundle.
 	 *
-	 * Exposes the user's excluded-blocks list and extension allowlist to the
+	 * Exposes the user's excluded-blocks list and disabled-extensions list to the
 	 * editor iframe as `window.dsgoSettings`, consumed by shouldExtendBlock()
 	 * and the per-extension gating (e.g. dynamic-tags).
 	 *
@@ -124,14 +124,14 @@ class Assets {
 	 * canvas via _wp_get_iframed_editor_assets(), where the extensions actually
 	 * execute. Localizing on `enqueue_block_editor_assets` would attach to the
 	 * outer editor frame only and never reach the iframe, silently disabling
-	 * both the exclusion list and the extension allowlist.
+	 * both the exclusion list and the disabled-extensions list.
 	 */
 	private function localize_extension_settings() {
 		$settings = \DesignSetGo\Admin\Settings::get_settings();
 		$anim     = \DesignSetGo\Animation_Defaults::get_effective();
 
-		$excluded_blocks    = isset( $settings['excluded_blocks'] ) ? (array) $settings['excluded_blocks'] : array();
-		$enabled_extensions = isset( $settings['enabled_extensions'] ) ? (array) $settings['enabled_extensions'] : array();
+		$excluded_blocks     = isset( $settings['excluded_blocks'] ) ? (array) $settings['excluded_blocks'] : array();
+		$disabled_extensions = isset( $settings['disabled_extensions'] ) ? (array) $settings['disabled_extensions'] : array();
 
 		wp_localize_script(
 			'designsetgo-extensions',
@@ -141,9 +141,8 @@ class Assets {
 				'defaultIconButtonHover'   => isset( $settings['animations']['default_icon_button_hover'] )
 					? sanitize_key( $settings['animations']['default_icon_button_hover'] )
 					: 'fill-diagonal',
-				// Empty list = all extensions enabled (matches the
-				// PHP convention in Block_Manager::should_load_extension).
-				'enabledExtensions'        => array_values( array_map( 'sanitize_key', $enabled_extensions ) ),
+				// Extensions the site switched off (Block_Manager::should_load_extension).
+				'disabledExtensions'       => array_values( array_map( 'sanitize_key', $disabled_extensions ) ),
 				'blockAnimations'          => self::block_animations_for_editor( $anim['map'] ),
 				'blockAnimationsEnabled'   => (bool) $anim['enabled'],
 				// The block-animations extension's own exclude list, so

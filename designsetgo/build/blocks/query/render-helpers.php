@@ -35,6 +35,8 @@
 
 defined( 'ABSPATH' ) || exit;
 
+require_once __DIR__ . '/param-scoping.php';
+
 if ( ! function_exists( 'designsetgo_safe_css_value' ) ) :
 
 	/**
@@ -49,9 +51,11 @@ if ( ! function_exists( 'designsetgo_safe_css_value' ) ) :
 	 *
 	 * The sanitizer strips characters that could close the current declaration
 	 * (`;`, `{`, `}`), escape sequences (`\`), control/newline characters, and
-	 * rejects CSS expression/javascript: patterns entirely. Legitimate CSS
-	 * values — `var(...)`, `calc(...)`, colors, lengths, aspect ratios — pass
-	 * through unchanged.
+	 * rejects values that load a resource or run script — `url(`, `image-set(`
+	 * (which takes bare strings as URLs), `expression(`, `javascript:` —
+	 * entirely. None of this helper's callers take an image, so a URL here can
+	 * only be a tracking beacon. Legitimate CSS values — `var(...)`,
+	 * `calc(...)`, colors, lengths, aspect ratios — pass through unchanged.
 	 *
 	 * @param mixed $value Raw attribute value.
 	 * @return string Safe-to-concatenate CSS value (empty string if rejected).
@@ -64,13 +68,15 @@ if ( ! function_exists( 'designsetgo_safe_css_value' ) ) :
 		if ( '' === $value ) {
 			return '';
 		}
-		$lower = strtolower( $value );
-		if ( false !== strpos( $lower, 'expression(' ) || false !== strpos( $lower, 'javascript:' ) ) {
-			return '';
-		}
 		// Strip chars that could break out of a `--prop: VALUE` declaration
 		// context: semicolon / braces / backslash (escape) / control + newline.
-		return preg_replace( '/[;{}\\\\\r\n\x00-\x1F]/', '', $value );
+		// Strip first, then check: `u\rl(` only reads as `url(` once the
+		// backslash is gone.
+		$value = preg_replace( '/[;{}\\\\\r\n\x00-\x1F]/', '', $value );
+		if ( preg_match( '/url\(|image-set\(|expression\(|javascript:/i', $value ) ) {
+			return '';
+		}
+		return $value;
 	}
 
 endif;
@@ -494,7 +500,7 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 		// Ensure BlockVisibility is available when this file is required directly
 		// (e.g. in integration tests) before the plugin bootstrap has run.
 		if ( ! class_exists( '\\DesignSetGo\\BlockVisibility' ) ) {
-			require_once DESIGNSETGO_PATH . 'includes/class-block-visibility.php';
+			require_once DESIGNSETGO_PATH . 'includes/features/class-block-visibility.php';
 		}
 
 		$skip_wrap = ( 'none' === $item_tag );
@@ -546,13 +552,38 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 	}
 
 	/**
-	 * Whitelisted URL params that influence query/filter output. Limited to
-	 * `q`, `sort`, plus any `filter_<taxonomy>` key (Task 14). Extensible via
-	 * the `designsetgo_query_url_params` filter.
+	 * Sanitize a single raw $_GET value the way
+	 * designsetgo_query_extract_params_from_request() always has: array
+	 * values map sanitize_text_field() over each entry, scalars coerce to
+	 * string first.
 	 *
+	 * @param mixed $value Raw, unslashed-pending value from $_GET.
+	 * @return string|string[]
+	 */
+	function designsetgo_query_sanitize_param_value( $value ) {
+		if ( is_array( $value ) ) {
+			return array_map( 'sanitize_text_field', wp_unslash( $value ) );
+		}
+		return sanitize_text_field( wp_unslash( (string) $value ) );
+	}
+
+	/**
+	 * Whitelisted URL params that influence query/filter output: `q`, `sort`,
+	 * any `filter_<taxonomy>` / `query_type_<attr>` key, and WooCommerce's
+	 * filter-block params. Extensible via the `designsetgo_query_url_params`
+	 * filter.
+	 *
+	 * Keys are resolved per Query by designsetgo_query_owned_request_params()
+	 * (param-scoping.php): `{key}__{queryId}` wins over a bare `{key}`, a key
+	 * scoped for another Query is never read, and a bare key still reaches
+	 * every Query (menu links, bookmarks, WooCommerce's filter blocks, which
+	 * can't know a queryId).
+	 *
+	 * @param string $query_id Sanitized queryId this extraction is for. Empty
+	 *                         reads bare keys only.
 	 * @return array
 	 */
-	function designsetgo_query_extract_params_from_request() {
+	function designsetgo_query_extract_params_from_request( $query_id = '' ) {
 		// `filter_*` is accepted wildcard-style below. The rest are WooCommerce's
 		// own filter-block query vars, read from its source: min_price/max_price
 		// (ProductFilterPrice), rating_filter (RatingFilter), and query_type_<attr>
@@ -567,21 +598,19 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 			return $params;
 		}
 
-		foreach ( (array) $_GET as $key => $value ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-			$key = sanitize_key( (string) $key );
-			if ( '' === $key ) {
-				continue;
-			}
+		foreach ( designsetgo_query_owned_request_params( sanitize_key( (string) $query_id ) ) as $key => $entry ) {
+			$key = (string) $key;
 			if ( ! in_array( $key, $allowed, true )
 				&& 0 !== strpos( $key, 'filter_' )
 				&& 0 !== strpos( $key, 'query_type_' ) ) {
 				continue;
 			}
-			if ( is_array( $value ) ) {
-				$params[ $key ] = array_map( 'sanitize_text_field', wp_unslash( $value ) );
-			} else {
-				$params[ $key ] = sanitize_text_field( wp_unslash( (string) $value ) );
+			$value = designsetgo_query_sanitize_param_value( $entry['value'] );
+			// An empty scoped value means "this Query clears the bare one".
+			if ( '' === $value || array() === array_filter( (array) $value, 'strlen' ) ) {
+				continue;
 			}
+			$params[ $key ] = is_array( $value ) ? array_values( array_filter( $value, 'strlen' ) ) : $value;
 		}
 
 		return $params;
@@ -820,7 +849,7 @@ if ( ! function_exists( 'designsetgo_query_render_container' ) ) :
 				'page'            => (int) $page,
 				'inner_html'      => $template_html,
 				'full_inner_html' => $template_html,
-				'params'          => designsetgo_query_extract_params_from_request(),
+				'params'          => designsetgo_query_extract_params_from_request( $query_id ),
 				'wrapper_attrs'   => null,
 			);
 
@@ -985,8 +1014,8 @@ if ( ! function_exists( 'designsetgo_query_render_blobs' ) ) :
 	 * Build the hidden, signed refresh source embedded in the query region.
 	 *
 	 * The view script sends it back verbatim on filter / sort / Load more, and
-	 * the public REST route renders only a definition whose signature verifies
-	 * — see DesignSetGo\Blocks\Query\RefreshSource.
+	 * the public REST route resolves the server-held definition only after
+	 * signature and viewer verification — see DesignSetGo\Blocks\Query\RefreshSource.
 	 *
 	 * @param string   $query_id        Sanitized queryId.
 	 * @param array    $attributes      Query attributes (already defaulted).

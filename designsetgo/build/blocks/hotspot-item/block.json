@@ -6,6 +6,13 @@
   "title": "Hotspot Item",
   "category": "designsetgo",
   "description": "A marker within a Hotspot image.",
+  "keywords": [
+    "hotspot",
+    "marker",
+    "pin",
+    "tooltip",
+    "point"
+  ],
   "textdomain": "designsetgo",
   "icon": "location-alt",
   "parent": [
@@ -49,6 +56,12 @@
     "icon": {
       "type": "string",
       "default": ""
+    },
+    "markerAriaLabel": {
+      "type": "string",
+      "source": "attribute",
+      "selector": ".dsgo-hotspot-item__marker",
+      "attribute": "aria-label"
     },
     "url": {
       "type": "string",

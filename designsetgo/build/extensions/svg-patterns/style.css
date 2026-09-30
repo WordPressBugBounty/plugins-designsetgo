@@ -1,0 +1,1 @@
+.has-dsgo-svg-pattern{isolation:isolate;position:relative}.has-dsgo-svg-pattern:after{background-attachment:var(--dsgo-svg-pattern-attachment,scroll);background-image:var(--dsgo-svg-pattern-image,none);background-repeat:repeat;background-size:var(--dsgo-svg-pattern-size,auto);border-radius:inherit;content:"";inset:0;pointer-events:none;position:absolute;z-index:-1}

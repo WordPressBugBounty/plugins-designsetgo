@@ -57,6 +57,32 @@ class Assets {
 		add_filter( 'style_loader_tag', array( $this, 'optimize_css_loading' ), 10, 4 );
 		add_action( 'wp_head', array( $this, 'inline_critical_css' ), 1 );
 		add_action( 'wp_enqueue_scripts', array( $this, 'dequeue_inlined_css' ), 20 );
+
+		add_action( 'wp_head', array( $this, 'print_noscript_fallbacks' ) );
+	}
+
+	/**
+	 * Print no-JavaScript fallbacks for blocks whose markup JS completes.
+	 *
+	 * Tabs save every panel `hidden` with an empty tablist that view.js fills,
+	 * and Table of Contents saves an empty list for view.js to populate, so
+	 * without JavaScript Tabs showed nothing and TOC showed a bare title. This
+	 * reveals every panel (labelled with its tab title) and hides the empty
+	 * nav and TOC. Inside <noscript> it is inert for everyone else, so it is
+	 * printed unconditionally: block detection can't see template content,
+	 * and fixing this in save() would mean new deprecations for both blocks.
+	 */
+	public function print_noscript_fallbacks() {
+		if ( is_admin() ) {
+			return;
+		}
+
+		// !important: themes commonly force [hidden] to display:none !important.
+		echo '<noscript><style id="designsetgo-noscript">'
+			. '.dsgo-tabs__nav,.dsgo-table-of-contents{display:none!important}'
+			. '.dsgo-tabs .dsgo-tab[hidden]{display:block!important}'
+			. '.dsgo-tabs .dsgo-tab[aria-label]::before{content:attr(aria-label);display:block;font-weight:600;margin-bottom:.5em}'
+			. '</style></noscript>' . "\n";
 	}
 
 	/**
@@ -143,6 +169,9 @@ class Assets {
 					: 'fill-diagonal',
 				// Extensions the site switched off (Block_Manager::should_load_extension).
 				'disabledExtensions'       => array_values( array_map( 'sanitize_key', $disabled_extensions ) ),
+				// Custom CSS is stripped on save without edit_css (Custom_CSS_Kses),
+				// so the panel goes read-only instead of accepting CSS it will drop.
+				'canEditCustomCSS'         => current_user_can( 'edit_css' ),
 				'blockAnimations'          => self::block_animations_for_editor( $anim['map'] ),
 				'blockAnimationsEnabled'   => (bool) $anim['enabled'],
 				// The block-animations extension's own exclude list, so
@@ -315,6 +344,18 @@ class Assets {
 			$frontend_asset['dependencies'],
 			$frontend_asset['version'],
 			true
+		);
+
+		// Screen-reader strings for the extension bundle. It loads on every
+		// page with a DSGo block, so it takes these few strings from PHP
+		// rather than pulling wp-i18n onto the front end.
+		wp_localize_script(
+			'designsetgo-frontend',
+			'dsgoFrontendL10n',
+			array(
+				'pauseVideo' => __( 'Pause background video', 'designsetgo' ),
+				'playVideo'  => __( 'Play background video', 'designsetgo' ),
+			)
 		);
 
 		// Interaction layers runtime. Registered always, enqueued only when a
@@ -495,12 +536,15 @@ class Assets {
 		// These are small enough to inline without significantly bloating HTML.
 		$critical_blocks = $this->get_present_critical_blocks();
 
-		$critical_css = '';
+		$critical_css     = '';
+		$critical_handles = array();
 
 		foreach ( $critical_blocks as $block ) {
 			$css_file = DESIGNSETGO_PATH . "build/blocks/{$block}/style-index.css";
 
 			if ( file_exists( $css_file ) && is_readable( $css_file ) ) {
+				$critical_handles[] = "designsetgo-{$block}-style";
+
 				// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPressVIPMinimum.Performance.FetchingRemoteData.FileGetContentsUnknown -- Reading own plugin build asset; path validated with file_exists/is_readable above.
 				$css = file_get_contents( $css_file );
 
@@ -515,8 +559,10 @@ class Assets {
 
 		if ( ! empty( $critical_css ) ) {
 			// Output raw CSS (safe - comes from our build files, not user input).
+			// data-dsgo-handles tells the soft-navigation asset loader these
+			// block stylesheets are already on the page.
 			// phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-			echo '<style id="designsetgo-critical-css">' . $critical_css . '</style>' . "\n";
+			echo '<style id="designsetgo-critical-css" data-dsgo-handles="' . esc_attr( implode( ' ', $critical_handles ) ) . '">' . $critical_css . '</style>' . "\n";
 		}
 	}
 

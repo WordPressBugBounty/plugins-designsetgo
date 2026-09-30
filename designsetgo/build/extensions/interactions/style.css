@@ -1,0 +1,1 @@
+:where(.dsgo-interaction-hidden){display:none!important}:where([data-dsgo-interactions][role=button]){cursor:pointer}

@@ -70,29 +70,52 @@ class Comparison_Table_Serializer {
 			}
 		}
 
-		// Header row.
-		$header_cells = '<th class="dsgo-comparison-table__header-cell dsgo-comparison-table__header-cell--label"></th>';
+		// save.js reads both fallback labels back from the stored markup
+		// (featuredBadgeText, savedCtaTexts), so a post opened in another
+		// editor language keeps them; mirror that, defaulting to __().
+		$badge_text      = isset( $attributes['featuredBadgeText'] ) && is_string( $attributes['featuredBadgeText'] ) && '' !== $attributes['featuredBadgeText']
+			? $attributes['featuredBadgeText']
+			: __( 'Popular', 'designsetgo' );
+		$saved_cta_texts = isset( $attributes['savedCtaTexts'] ) && is_array( $attributes['savedCtaTexts'] )
+			? array_values( $attributes['savedCtaTexts'] )
+			: array();
+		// savedCtaTexts is positional: one entry per column with a link.
+		$cta_position = 0;
+
+		// Header row. The corner is a <td> and each column header carries
+		// scope="col", matching save.js.
+		$header_cells = '<td class="dsgo-comparison-table__header-cell dsgo-comparison-table__header-cell--label"></td>';
 		foreach ( $table_columns as $column ) {
 			$col_featured  = ! empty( $column['featured'] );
 			$col_name      = isset( $column['name'] ) ? (string) $column['name'] : '';
 			$col_link      = isset( $column['link'] ) ? (string) $column['link'] : '';
 			$col_link_text = isset( $column['linkText'] ) ? (string) $column['linkText'] : '';
 
-			$header_cells .= '<th class="' . esc_attr(
+			$header_cells .= '<th scope="col" class="' . esc_attr(
 				'dsgo-comparison-table__header-cell' . ( $col_featured ? ' dsgo-comparison-table__header-cell--featured' : '' )
 			) . '">';
 
 			if ( $col_featured ) {
-				$header_cells .= '<span class="dsgo-comparison-table__featured-badge">' . esc_html__( 'Popular', 'designsetgo' ) . '</span>';
+				$header_cells .= '<span class="dsgo-comparison-table__featured-badge">' . esc_html( $badge_text ) . '</span>';
 			}
 
 			$header_cells .= '<span class="dsgo-comparison-table__column-name">' . wp_kses_post( $col_name ) . '</span>';
 
+			$saved_cta_text = '';
+			if ( '' !== $col_link ) {
+				$saved_entry = isset( $saved_cta_texts[ $cta_position ] ) ? $saved_cta_texts[ $cta_position ] : null;
+				if ( is_array( $saved_entry ) && isset( $saved_entry['text'] ) && is_string( $saved_entry['text'] ) ) {
+					$saved_cta_text = $saved_entry['text'];
+				}
+				++$cta_position;
+			}
+
 			if ( $show_ctas && '' !== $col_link ) {
+				$cta_fallback  = '' !== $saved_cta_text ? $saved_cta_text : __( 'Get Started', 'designsetgo' );
 				$header_cells .= '<a href="' . esc_url( $col_link ) . '" class="' .
 					esc_attr( 'dsgo-comparison-table__cta dsgo-comparison-table__cta--' . $cta_style ) .
 					'" rel="noopener noreferrer">' .
-					esc_html( '' !== $col_link_text ? $col_link_text : __( 'Get Started', 'designsetgo' ) ) .
+					esc_html( '' !== $col_link_text ? $col_link_text : $cta_fallback ) .
 					'</a>';
 			} elseif ( $show_ctas && '' !== $col_link_text ) {
 				$header_cells .= '<span class="' .
@@ -111,7 +134,7 @@ class Comparison_Table_Serializer {
 			$row_cells   = ( isset( $row['cells'] ) && is_array( $row['cells'] ) ) ? $row['cells'] : array();
 
 			$body_rows .= '<tr class="dsgo-comparison-table__row">' .
-				'<td class="dsgo-comparison-table__cell dsgo-comparison-table__cell--label">' .
+				'<th scope="row" class="dsgo-comparison-table__cell dsgo-comparison-table__cell--label">' .
 				'<div class="dsgo-comparison-table__label-wrapper">' .
 				'<span class="dsgo-comparison-table__row-label">' . wp_kses_post( $row_label ) . '</span>';
 
@@ -120,7 +143,7 @@ class Comparison_Table_Serializer {
 					'" aria-label="' . esc_attr( $row_tooltip ) . '" role="button" tabindex="0">?</span>';
 			}
 
-			$body_rows .= '</div></td>';
+			$body_rows .= '</div></th>';
 
 			foreach ( $row_cells as $cell_index => $cell ) {
 				$cell_type     = isset( $cell['type'] ) ? (string) $cell['type'] : 'text';
@@ -135,12 +158,12 @@ class Comparison_Table_Serializer {
 					'<div class="dsgo-comparison-table__cell-content">';
 
 				if ( 'check' === $cell_type ) {
-					$body_rows .= '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none"' .
+					$body_rows .= '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"' .
 						' stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"' .
 						' class="dsgo-comparison-table__icon dsgo-comparison-table__icon--check" aria-label="Yes" role="img">' .
 						'<polyline points="20 6 9 17 4 12"></polyline></svg>';
 				} elseif ( 'cross' === $cell_type ) {
-					$body_rows .= '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="none"' .
+					$body_rows .= '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"' .
 						' stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"' .
 						' class="dsgo-comparison-table__icon dsgo-comparison-table__icon--cross" aria-label="No" role="img">' .
 						'<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>';

@@ -320,6 +320,20 @@ class Plugin {
 	public $assets;
 
 	/**
+	 * Per-feature extension frontend bundles.
+	 *
+	 * @var Extension_Bundles
+	 */
+	public $extension_bundles;
+
+	/**
+	 * Soft-navigation asset manifest.
+	 *
+	 * @var Frontend_Asset_Manifest
+	 */
+	public $frontend_asset_manifest;
+
+	/**
 	 * Blocks Loader instance.
 	 *
 	 * @var Blocks\Loader
@@ -374,6 +388,20 @@ class Plugin {
 	 * @var Scroll_Marquee_Styles
 	 */
 	public $scroll_marquee_styles;
+
+	/**
+	 * Countdown Timer Timezone instance.
+	 *
+	 * @var Countdown_Timer_Timezone
+	 */
+	public $countdown_timer_timezone;
+
+	/**
+	 * Render-time image attributes for static blocks (Hotspot, Card).
+	 *
+	 * @var Static_Block_Images
+	 */
+	public $static_block_images;
 
 	/**
 	 * Admin Menu instance.
@@ -596,12 +624,17 @@ class Plugin {
 		new Core\Translations();
 		require_once DESIGNSETGO_PATH . 'includes/features/class-block-visibility.php';
 		BlockVisibility::register();
+		require_once DESIGNSETGO_PATH . 'includes/features/class-custom-css-kses.php';
+		Custom_CSS_Kses::register();
 		// --- Core ---
 		require_once DESIGNSETGO_PATH . 'includes/core/class-assets.php';
+		require_once DESIGNSETGO_PATH . 'includes/core/class-extension-bundles.php';
+		require_once DESIGNSETGO_PATH . 'includes/core/class-frontend-asset-manifest.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/class-loader.php';
 		// --- Blocks: Forms ---
 		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/field-render-helpers.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-security.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-field-rules.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-handler.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-submissions.php';
 		// --- Blocks: Modal ---
@@ -682,10 +715,13 @@ class Plugin {
 		require_once DESIGNSETGO_PATH . 'includes/features/class-icon-injector.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-button-global-styles.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-scroll-marquee-styles.php';
+		require_once DESIGNSETGO_PATH . 'includes/features/class-countdown-timer-timezone.php';
+		require_once DESIGNSETGO_PATH . 'includes/features/class-static-block-images.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-extension-attributes.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-style-binding.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-interactions.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-schema-output.php';
+		require_once DESIGNSETGO_PATH . 'includes/bindings/class-bindings-html-processor.php';
 		require_once DESIGNSETGO_PATH . 'includes/bindings/class-block-bindings-support.php';
 		require_once DESIGNSETGO_PATH . 'includes/data/svg-pattern-data.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-svg-pattern-renderer.php';
@@ -774,6 +810,16 @@ class Plugin {
 		$this->button_global_styles->init();
 		$this->scroll_marquee_styles = new Scroll_Marquee_Styles();
 		$this->scroll_marquee_styles->init();
+		$this->countdown_timer_timezone = new Countdown_Timer_Timezone();
+		$this->countdown_timer_timezone->init();
+		$this->static_block_images = new Static_Block_Images();
+		$this->static_block_images->init();
+
+		// Per-feature extension bundles, and the manifest that loads blocks'
+		// and extensions' assets after a soft navigation.
+		$this->extension_bundles       = new Extension_Bundles();
+		$this->frontend_asset_manifest = new Frontend_Asset_Manifest();
+
 		$this->llms_txt = new LLMS_Txt\Controller();
 
 		// Initialize admin-only features.
@@ -878,7 +924,7 @@ class Plugin {
 				array(
 					'googleMapsApiKey'    => ! empty( $integrations_settings['google_maps_api_key'] ) ? esc_js( $integrations_settings['google_maps_api_key'] ) : '',
 					'turnstileSiteKey'    => ! empty( $integrations_settings['turnstile_site_key'] ) ? esc_js( $integrations_settings['turnstile_site_key'] ) : '',
-					'turnstileConfigured' => ! empty( $integrations_settings['turnstile_site_key'] ) && ! empty( $integrations_settings['turnstile_secret_key'] ),
+					'turnstileConfigured' => \DesignSetGo\Blocks\Form_Security::is_turnstile_configured(),
 				)
 			);
 		}

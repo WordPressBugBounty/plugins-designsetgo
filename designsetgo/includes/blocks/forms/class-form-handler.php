@@ -62,7 +62,7 @@ use WP_REST_Response;
  *    @param int    $submission_id   Submission post ID
  *    @param string $form_id         Form identifier
  *    @param bool   $email_sent      Whether email was sent successfully
- *    @param string $email_to        Recipient email address
+ *    @param string $email_to        Recipient email address(es), comma-separated
  *    @param string $email_subject   Email subject line
  *
  * 6. designsetgo_form_turnstile_failed
@@ -101,8 +101,19 @@ class Form_Handler {
 
 	/**
 	 * Transient holding definitions for forms that live outside wp_posts.
+	 *
+	 * Bump the version whenever the definition shape changes, so a cached
+	 * definition missing a newer key never skips that key's checks.
 	 */
-	const EXTERNAL_DEFINITIONS_CACHE = 'dsgo_form_external_definitions_v1';
+	const EXTERNAL_DEFINITIONS_CACHE = 'dsgo_form_external_definitions_v2';
+
+	/**
+	 * Transient prefix for a single form definition resolved from wp_posts.
+	 *
+	 * Version 3 adds `rules`, and drops definitions v2 cached from
+	 * password-protected posts. Bump alongside EXTERNAL_DEFINITIONS_CACHE.
+	 */
+	const DEFINITION_CACHE_PREFIX = 'dsgo_form_definition_v3_';
 
 	/**
 	 * Constructor.
@@ -330,17 +341,33 @@ class Form_Handler {
 			}
 		}
 
-		// Turnstile verification.
-		// If the block requires Turnstile, reject submissions without a valid token.
-		$turnstile_token = $request->get_param( 'turnstile_token' );
-		if ( $turnstile_required && empty( $turnstile_token ) ) {
-			return new WP_Error(
-				'turnstile_required',
-				__( 'Security verification is required. Please complete the challenge and try again.', 'designsetgo' ),
-				array( 'status' => 403 )
-			);
-		}
-		if ( ! empty( $turnstile_token ) ) {
+		// Turnstile verification. Only a form that requires Turnstile checks a
+		// token: a stray one on any other form is ignored rather than
+		// verified, so that form never depends on Cloudflare being reachable.
+		if ( $turnstile_required ) {
+			// Without both keys the widget can't render, or the server can't
+			// check what it returns. Say so plainly instead of asking the
+			// visitor to complete a challenge that isn't there.
+			if ( ! Form_Security::is_turnstile_configured() ) {
+				/** This action is documented below. */
+				do_action( 'designsetgo_form_turnstile_failed', $form_id, $this->security->get_client_ip(), 'turnstile_not_configured' );
+
+				return new WP_Error(
+					'turnstile_not_configured',
+					__( 'This form can\'t accept submissions right now. Please contact the site owner.', 'designsetgo' ),
+					array( 'status' => 503 )
+				);
+			}
+
+			$turnstile_token = (string) $request->get_param( 'turnstile_token' );
+			if ( '' === $turnstile_token ) {
+				return new WP_Error(
+					'turnstile_required',
+					__( 'Security verification is required. Please complete the challenge and try again.', 'designsetgo' ),
+					array( 'status' => 403 )
+				);
+			}
+
 			$turnstile_result = $this->security->verify_turnstile( $turnstile_token );
 			if ( is_wp_error( $turnstile_result ) ) {
 				/**
@@ -386,8 +413,13 @@ class Form_Handler {
 				? $field_constraints[ $field_name ]
 				: null;
 
-			// Type-specific validation.
+			// Type-specific validation, then the constraints the field renders
+			// (minlength, pattern, min/max, step), which only the browser
+			// enforced before.
 			$validation_result = $this->validate_field( $field_value, $field_type, $allowed_values );
+			if ( true === $validation_result && isset( $form_definition['rules'][ $field_name ] ) ) {
+				$validation_result = Form_Field_Rules::check( $field_value, $form_definition['rules'][ $field_name ] );
+			}
 			if ( is_wp_error( $validation_result ) ) {
 				// Security monitoring hook for validation failures.
 				do_action( 'designsetgo_form_validation_failed', $form_id, $field_name, $field_type, $validation_result->get_error_code(), $this->security->get_client_ip() );
@@ -563,9 +595,17 @@ class Form_Handler {
 
 			$field_type = isset( $field_types[ $key ] ) ? sanitize_text_field( $field_types[ $key ] ) : 'text';
 
+			// String values go through unsanitized, as they do on the REST
+			// path: handle_form_submission() checks each against the field's
+			// constraints and then sanitizes it by field type. Sanitizing here
+			// first changed what was checked (`<` grew into `&lt;`, whitespace
+			// collapsed), rejecting values the browser had accepted, and
+			// stripped a textarea's line breaks before sanitize_textarea_field()
+			// could keep them. An array (`name[]`) becomes an empty string, as
+			// sanitize_text_field() always made it.
 			$fields[] = array(
 				'name'  => $key,
-				'value' => sanitize_text_field( wp_unslash( $value ) ),
+				'value' => is_string( $value ) ? wp_unslash( $value ) : '', // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Validated and sanitized by type in handle_form_submission().
 				'type'  => $field_type,
 			);
 		}
@@ -588,17 +628,59 @@ class Form_Handler {
 				$referer
 			);
 		} else {
-			$redirect = add_query_arg(
-				array(
-					'dsgo_form_status' => 'success',
-					'dsgo_form_id'     => $form_id,
-				),
-				$referer
-			);
+			$redirect = $this->get_success_redirect_url( $form_id, $request );
+
+			if ( '' === $redirect ) {
+				$redirect = add_query_arg(
+					array(
+						'dsgo_form_status' => 'success',
+						'dsgo_form_id'     => $form_id,
+					),
+					$referer
+				);
+			}
 		}
 
 		wp_safe_redirect( $redirect );
 		exit;
+	}
+
+	/**
+	 * The form's own "Redirect URL", for a submission that did not go through AJAX.
+	 *
+	 * The AJAX path follows this URL in view.js; a plain POST — AJAX Submit
+	 * off, or the automatic fallback when a host blocks both REST and
+	 * admin-ajax — must land in the same place. The URL comes from the
+	 * published form's attributes, never from the request, and matches
+	 * view.js's rule: http(s) only, any host.
+	 *
+	 * @param string          $form_id Form ID.
+	 * @param WP_REST_Request $request Submission request, for the source post.
+	 * @return string Redirect URL, or '' when the form has none.
+	 */
+	private function get_success_redirect_url( $form_id, $request ) {
+		$definition = $this->get_form_definition( $form_id, $this->get_source_post_id( $request ) );
+		$url        = isset( $definition['attributes']['redirectUrl'] ) ? $definition['attributes']['redirectUrl'] : '';
+		$url        = is_string( $url ) ? esc_url_raw( trim( $url ), array( 'http', 'https' ) ) : '';
+
+		if ( '' === $url ) {
+			return '';
+		}
+
+		// wp_safe_redirect() only follows hosts on this list, so admit the one
+		// the author configured.
+		$host = wp_parse_url( $url, PHP_URL_HOST );
+		if ( $host ) {
+			add_filter(
+				'allowed_redirect_hosts',
+				static function ( $hosts ) use ( $host ) {
+					$hosts[] = $host;
+					return $hosts;
+				}
+			);
+		}
+
+		return $url;
 	}
 
 	/**
@@ -818,7 +900,10 @@ class Form_Handler {
 			$handle,
 			'dsgoIntegrations',
 			array(
-				'turnstileSiteKey' => ! empty( $integrations_settings['turnstile_site_key'] ) ? esc_js( $integrations_settings['turnstile_site_key'] ) : '',
+				'turnstileSiteKey'    => ! empty( $integrations_settings['turnstile_site_key'] ) ? esc_js( $integrations_settings['turnstile_site_key'] ) : '',
+				// wp_localize_script() stringifies booleans ("1" / ""), so read
+				// it as truthy in JS, never with `=== true`.
+				'turnstileConfigured' => Form_Security::is_turnstile_configured(),
 			)
 		);
 	}
@@ -919,11 +1004,18 @@ class Form_Handler {
 		$email_reply_to  = str_replace( $newline_chars, '', $email_reply_to );
 
 		// Validate and set defaults (single sanitization pass).
-		if ( empty( $email_to ) || ! is_email( $email_to ) ) {
-			$email_to = get_option( 'admin_email' );
-		} else {
-			$email_to = sanitize_email( $email_to );
-		}
+		// Several recipients may be listed, separated by commas or semicolons.
+		// Invalid entries are dropped rather than sinking the whole list; only
+		// a list with no valid address at all falls back to the admin email.
+		// Kept as a comma-separated string, which wp_mail() accepts and which
+		// the designsetgo_form_email_sent hook and stored meta already carry.
+		$recipients = array_filter(
+			array_map( 'trim', preg_split( '/[,;]/', $email_to ) ),
+			'is_email'
+		);
+		$email_to   = empty( $recipients )
+			? get_option( 'admin_email' )
+			: implode( ', ', array_unique( array_map( 'sanitize_email', $recipients ) ) );
 
 		if ( empty( $email_subject ) ) {
 			$email_subject = __( 'New Form Submission', 'designsetgo' );
@@ -1217,7 +1309,7 @@ class Form_Handler {
 	 *
 	 * @param string $form_id        Form identifier to look up.
 	 * @param int    $source_post_id Page the form was submitted from, or 0.
-	 * @return array{attributes: array, field_types: array, constraints: array, required_fields: string[]}|null Form definition or null.
+	 * @return array{attributes: array, field_types: array, constraints: array, required_fields: string[], rules: array}|null Form definition or null.
 	 */
 	private function get_form_definition( $form_id, $source_post_id = 0 ) {
 		if ( ! is_string( $form_id ) || '' === $form_id ) {
@@ -1231,7 +1323,7 @@ class Form_Handler {
 			}
 		}
 
-		$cache_key = 'dsgo_form_definition_v2_' . md5( $form_id );
+		$cache_key = self::DEFINITION_CACHE_PREFIX . md5( $form_id );
 		$cached    = get_transient( $cache_key );
 
 		if ( false !== $cached && is_array( $cached ) ) {
@@ -1257,6 +1349,9 @@ class Form_Handler {
 		);
 
 		foreach ( (array) $posts as $post ) {
+			if ( ! $this->is_eligible_form_host( (int) $post->ID ) ) {
+				continue;
+			}
 			$blocks     = parse_blocks( $post->post_content );
 			$form_block = $this->find_form_block( $blocks, $form_id );
 			if ( null !== $form_block ) {
@@ -1271,10 +1366,50 @@ class Form_Handler {
 	}
 
 	/**
+	 * Whether a published post may serve its form to the site-wide lookup.
+	 *
+	 * This lookup ignores who is asking and its result is cached for everyone,
+	 * so it cannot honour a visitor's password cookie: a password-protected
+	 * post is never eligible. A form there is still reachable through
+	 * get_source_post_form_definition(), which checks that cookie.
+	 *
+	 * Viewability is not required. The query already limits candidates to
+	 * published posts, and this lookup is the only way to reach a form kept in
+	 * a post type that is not publicly viewable but renders into public pages:
+	 * synced patterns, templates and template parts, and theme builder or popup
+	 * post types (GeneratePress and Kadence Elements, Blocksy Content Blocks,
+	 * Spectra popups). Sites that want it narrower can use the filter.
+	 *
+	 * @param int $post_id Post ID.
+	 * @return bool
+	 */
+	private function is_eligible_form_host( $post_id ) {
+		$post = get_post( $post_id );
+		if ( ! $post || '' !== $post->post_password ) {
+			return false;
+		}
+
+		/**
+		 * Filters whether a published post may serve its form to submissions
+		 * that name no source page.
+		 *
+		 * Password-protected posts never reach this filter. The result is cached
+		 * with the form definition for an hour, so return the same answer for
+		 * every visitor.
+		 *
+		 * @since 2.8.3
+		 *
+		 * @param bool     $allowed Whether the post is eligible. Default true.
+		 * @param \WP_Post $post    Candidate post.
+		 */
+		return (bool) apply_filters( 'designsetgo_form_lookup_allows_post', true, $post );
+	}
+
+	/**
 	 * Build the server-owned definition for a parsed form block.
 	 *
 	 * @param array $form_block Parsed designsetgo/form-builder block.
-	 * @return array{attributes: array, field_types: array, constraints: array, required_fields: string[]} Form definition.
+	 * @return array{attributes: array, field_types: array, constraints: array, required_fields: string[], rules: array} Form definition.
 	 */
 	private function build_form_definition( array $form_block ) {
 		$inner_blocks = isset( $form_block['innerBlocks'] ) ? $form_block['innerBlocks'] : array();
@@ -1284,6 +1419,7 @@ class Form_Handler {
 			'field_types'     => $this->extract_field_types_from_blocks( $inner_blocks ),
 			'constraints'     => $this->extract_field_value_constraints_from_blocks( $inner_blocks ),
 			'required_fields' => $this->extract_required_field_names_from_blocks( $inner_blocks ),
+			'rules'           => Form_Field_Rules::extract( $inner_blocks ),
 		);
 	}
 
@@ -1711,7 +1847,7 @@ class Form_Handler {
 				'designsetgo/form-builder' === $block['blockName'] &&
 				isset( $block['attrs']['formId'] )
 			) {
-				delete_transient( 'dsgo_form_definition_v2_' . md5( $block['attrs']['formId'] ) );
+				delete_transient( self::DEFINITION_CACHE_PREFIX . md5( $block['attrs']['formId'] ) );
 				delete_transient( 'dsgo_form_attrs_v2_' . md5( $block['attrs']['formId'] ) );
 				delete_transient( 'dsgo_form_field_types_' . md5( $block['attrs']['formId'] ) );
 				delete_transient( 'dsgo_form_field_constraints_' . md5( $block['attrs']['formId'] ) );

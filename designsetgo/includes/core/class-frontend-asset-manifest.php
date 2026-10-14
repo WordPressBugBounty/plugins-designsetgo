@@ -227,9 +227,13 @@ class Frontend_Asset_Manifest {
 
 		$entry = array( 'deps' => $deps );
 
-		// A handle without a src is an alias that only groups dependencies.
+		// A handle without a src is an alias that only groups dependencies, as
+		// is one whose URL a `script_loader_src` filter blanked.
 		if ( $script->src ) {
-			$entry['src'] = self::asset_url( $wp_scripts, $script, 'script_loader_src' );
+			$urls = self::printed_urls( $wp_scripts, $handle, 'script_loader_tag' );
+			if ( $urls ) {
+				$entry['src'] = $urls[0];
+			}
 		}
 
 		// Localized data and translations run before the script, as WordPress
@@ -269,7 +273,15 @@ class Frontend_Asset_Manifest {
 			return false;
 		}
 
-		$entry = array( 'href' => self::asset_url( $wp_styles, $style, 'style_loader_src' ) );
+		$urls = self::printed_urls( $wp_styles, $handle, 'style_loader_tag' );
+		if ( ! $urls ) {
+			return false;
+		}
+
+		// An RTL site gets the stylesheet's tag, then its RTL one. `replace`
+		// prints only the RTL one; otherwise it adds to the main stylesheet.
+		$rtl   = $style->extra['rtl'] ?? null;
+		$entry = array( 'href' => 'replace' === $rtl ? $urls[ count( $urls ) - 1 ] : $urls[0] );
 
 		$after = $wp_styles->get_data( $handle, 'after' );
 		if ( is_array( $after ) && $after ) {
@@ -282,36 +294,47 @@ class Frontend_Asset_Manifest {
 	}
 
 	/**
-	 * Resolve a registered asset's URL the way WordPress does when printing it.
+	 * The URLs WordPress prints for a registered asset, in tag order.
+	 *
+	 * Core renders the tag, so the URL gets its version argument and
+	 * `script_loader_src` / `style_loader_src` exactly as the printed tags do,
+	 * and a CDN or asset-optimization plugin rewrites it the same way. The URL
+	 * is read from the `*_loader_tag` filter's own argument, ahead of every
+	 * other callback, so a plugin that rewrites the tag itself (delay-JS moving
+	 * `src` to `data-src`, a changed `id`) can't hide it.
 	 *
 	 * @param \WP_Dependencies $registry Scripts or styles registry.
-	 * @param \_WP_Dependency  $asset    Registered asset.
-	 * @param string           $filter   `script_loader_src` or `style_loader_src`.
-	 * @return string URL.
+	 * @param string           $handle   Asset handle.
+	 * @param string           $hook     `script_loader_tag` or `style_loader_tag`.
+	 * @return string[] URLs; none when WordPress prints no tag (a blanked or
+	 *                  conditional asset).
 	 */
-	private static function asset_url( $registry, $asset, $filter ) {
-		$src = (string) $asset->src;
+	private static function printed_urls( $registry, $handle, $hook ) {
+		$urls    = array();
+		$capture = static function ( $tag, $tag_handle, $url ) use ( $handle, &$urls ) {
+			if ( $tag_handle === $handle && is_string( $url ) && '' !== $url ) {
+				$urls[] = $url;
+			}
+			return $tag;
+		};
 
-		if (
-			! preg_match( '|^(https?:)?//|', $src )
-			&& ! ( $registry->content_url && str_starts_with( $src, $registry->content_url ) )
-		) {
-			$src = $registry->base_url . $src;
+		// Concatenation would queue the tag instead of printing it.
+		$do_concat           = $registry->do_concat;
+		$registry->do_concat = false;
+		add_filter( $hook, $capture, PHP_INT_MIN, 3 );
+		ob_start();
+		try {
+			$registry->do_item( $handle );
+		} finally {
+			ob_end_clean();
+			remove_filter( $hook, $capture, PHP_INT_MIN );
+			$registry->do_concat = $do_concat;
 		}
 
-		$ver = null === $asset->ver ? '' : ( $asset->ver ? $asset->ver : $registry->default_version );
-		if ( '' !== (string) $ver ) {
-			$src = add_query_arg( 'ver', $ver, $src );
-		}
-
-		// Core's own filters, so a CDN or asset-optimization plugin rewrites
-		// these URLs exactly as it does the printed tags.
-		if ( 'style_loader_src' === $filter ) {
-			/** This filter is documented in wp-includes/class-wp-styles.php */
-			return (string) apply_filters( 'style_loader_src', $src, $asset->handle ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- core filter.
-		}
-
-		/** This filter is documented in wp-includes/class-wp-scripts.php */
-		return (string) apply_filters( 'script_loader_src', $src, $asset->handle ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- core filter.
+		// A stylesheet's `href` arrives escaped for the attribute (`&#038;`);
+		// the manifest carries plain URLs for JavaScript.
+		return 'style_loader_tag' === $hook
+			? array_map( array( \WP_HTML_Decoder::class, 'decode_attribute' ), $urls )
+			: $urls;
 	}
 }

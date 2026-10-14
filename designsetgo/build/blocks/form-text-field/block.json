@@ -15,9 +15,14 @@
   "textdomain": "designsetgo",
   "icon": "edit",
   "parent": [
-    "designsetgo/form-builder"
+    "designsetgo/form-builder",
+    "designsetgo/form-step"
   ],
   "attributes": {
+    "dsgoConditions": {
+      "type": "object",
+      "default": null
+    },
     "fieldName": {
       "type": "string",
       "default": ""

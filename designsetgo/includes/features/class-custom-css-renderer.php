@@ -103,7 +103,10 @@ class Custom_CSS_Renderer {
 	 */
 	public function collect_custom_css( $block_content, $block ) {
 		// Check if block has custom CSS attribute and a valid block name.
-		if ( isset( $block['attrs']['dsgoCustomCSS'] ) && ! empty( $block['attrs']['dsgoCustomCSS'] ) && isset( $block['blockName'] ) ) {
+		// The attribute is a string. Anything else (hand-edited or imported
+		// markup) is ignored rather than cast, which warned "Array to string
+		// conversion" on every page view.
+		if ( isset( $block['attrs']['dsgoCustomCSS'] ) && is_string( $block['attrs']['dsgoCustomCSS'] ) && '' !== $block['attrs']['dsgoCustomCSS'] && isset( $block['blockName'] ) ) {
 			$custom_css = $block['attrs']['dsgoCustomCSS'];
 
 			/**
@@ -144,6 +147,9 @@ class Custom_CSS_Renderer {
 			 * @return string Modified class name.
 			 */
 			$class_name = apply_filters( 'designsetgo/custom_css_class_name', 'dsgo-custom-css-' . $hash, $hash, $block['blockName'], $custom_css );
+
+			// Dynamic blocks have no saved root; synchronize the rendered selector too.
+			$block_content = Custom_CSS_Support::apply_class( $block_content, $class_name, false );
 
 			// Store CSS with hash as key to avoid duplicates.
 			$this->custom_css[ $hash ] = array(
@@ -363,15 +369,6 @@ class Custom_CSS_Renderer {
 	 * @return string Hash string.
 	 */
 	private function hash_code( $str ) {
-		$hash = 0;
-		$len  = strlen( $str );
-
-		for ( $i = 0; $i < $len; $i++ ) {
-			$char = ord( $str[ $i ] );
-			$hash = ( ( $hash << 5 ) - $hash ) + $char;
-			$hash = $hash & 0xFFFFFFFF; // Convert to 32bit integer.
-		}
-
-		return base_convert( (string) abs( $hash ), 10, 36 );
+		return Custom_CSS_Support::hash_code( $str );
 	}
 }

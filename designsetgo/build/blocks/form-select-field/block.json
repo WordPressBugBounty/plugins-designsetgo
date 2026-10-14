@@ -14,7 +14,8 @@
     "choice"
   ],
   "parent": [
-    "designsetgo/form-builder"
+    "designsetgo/form-builder",
+    "designsetgo/form-step"
   ],
   "textdomain": "designsetgo",
   "icon": "menu",
@@ -33,6 +34,10 @@
     "designsetgo/form/inputPadding"
   ],
   "attributes": {
+    "dsgoConditions": {
+      "type": "object",
+      "default": null
+    },
     "fieldName": {
       "type": "string",
       "default": ""

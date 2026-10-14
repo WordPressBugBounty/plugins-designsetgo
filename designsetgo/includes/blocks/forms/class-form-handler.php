@@ -105,15 +105,17 @@ class Form_Handler {
 	 * Bump the version whenever the definition shape changes, so a cached
 	 * definition missing a newer key never skips that key's checks.
 	 */
-	const EXTERNAL_DEFINITIONS_CACHE = 'dsgo_form_external_definitions_v2';
+	const EXTERNAL_DEFINITIONS_CACHE = 'dsgo_form_external_definitions_v4';
 
 	/**
 	 * Transient prefix for a single form definition resolved from wp_posts.
 	 *
 	 * Version 3 adds `rules`, and drops definitions v2 cached from
-	 * password-protected posts. Bump alongside EXTERNAL_DEFINITIONS_CACHE.
+	 * password-protected posts; v4 (and EXTERNAL_DEFINITIONS_CACHE v3) add
+	 * `labels`; v5 (and EXTERNAL_DEFINITIONS_CACHE v4) add `conditions`.
+	 * Bump alongside EXTERNAL_DEFINITIONS_CACHE.
 	 */
-	const DEFINITION_CACHE_PREFIX = 'dsgo_form_definition_v3_';
+	const DEFINITION_CACHE_PREFIX = 'dsgo_form_definition_v5_';
 
 	/**
 	 * Constructor.
@@ -128,7 +130,12 @@ class Form_Handler {
 		add_action( 'wp_ajax_designsetgo_form_submit', array( $this, 'handle_ajax_submission' ) );
 		add_action( 'wp_ajax_nopriv_designsetgo_form_submit', array( $this, 'handle_ajax_submission' ) );
 
-		// Non-AJAX form POST handler.
+		// Non-AJAX form POST handler. Forms post to admin-post.php?action=…
+		// (Form_No_JS_Submit::post_url()) and are caught on admin_init, before
+		// admin-post.php routes on $_REQUEST['action'], which an author's own
+		// field named `action` would override. The admin_post hooks still
+		// serve pages cached with the older hidden `action` field.
+		add_action( 'admin_init', array( $this, 'maybe_handle_post_submission' ), 0 );
 		add_action( 'admin_post_designsetgo_form_submit', array( $this, 'handle_post_submission' ) );
 		add_action( 'admin_post_nopriv_designsetgo_form_submit', array( $this, 'handle_post_submission' ) );
 
@@ -383,6 +390,26 @@ class Form_Handler {
 			}
 		}
 
+		// Conditional logic: fields the visitor couldn't see neither block the
+		// submission nor carry values (a hidden field's value is dropped even if
+		// a client sends one). Rules read text-like values as the loop below
+		// will sanitize and store them, so markup or %xx octets can't make a
+		// rule see one answer while another is stored. Blank values and the
+		// number/url/email/tel types stay raw: their sanitizers rewrite blanks
+		// and formats ('' → 0, example.com → http://example.com), which would
+		// diverge from the browser's evaluation, and validate_field() already
+		// rejects malformed values of those types.
+		list( $fields, $form_definition['required_fields'] ) = Form_Conditions_Submission::filter_submission(
+			$form_definition,
+			(array) $fields,
+			function ( $value, $type ) {
+				if ( '' === trim( (string) $value ) || in_array( $type, array( 'number', 'url', 'email', 'tel' ), true ) ) {
+					return $value;
+				}
+				return $this->sanitize_field( $value, $type );
+			}
+		);
+
 		// Sanitize and validate all fields.
 		$form_field_types  = $form_definition['field_types'];
 		$field_constraints = $form_definition['constraints'];
@@ -432,7 +459,10 @@ class Form_Handler {
 						$field_name,
 						$validation_result->get_error_message()
 					),
-					array( 'status' => 400 )
+					array(
+						'status' => 400,
+						'field'  => $field_name,
+					)
 				);
 			}
 
@@ -450,13 +480,20 @@ class Form_Handler {
 				return new WP_Error(
 					'required_field_missing',
 					__( 'Please complete all required fields.', 'designsetgo' ),
-					array( 'status' => 400 )
+					array(
+						'status' => 400,
+						'field'  => $field_name,
+					)
 				);
 			}
 		}
 
 		// Store submission.
-		$submission_id = $this->store_submission( $form_id, $sanitized_fields );
+		$submission_id = $this->store_submission(
+			$form_id,
+			$sanitized_fields,
+			isset( $form_definition['labels'] ) ? $form_definition['labels'] : array()
+		);
 
 		if ( is_wp_error( $submission_id ) ) {
 			return new WP_Error(
@@ -476,7 +513,8 @@ class Form_Handler {
 		}
 
 		// Trigger action hook for email notifications, integrations, etc.
-		do_action( 'designsetgo_form_submitted', $submission_id, $form_id, $sanitized_fields );
+		// The fourth argument is the form's server-resolved block attributes.
+		do_action( 'designsetgo_form_submitted', $submission_id, $form_id, $sanitized_fields, $block_attrs );
 
 		return new WP_REST_Response(
 			array(
@@ -556,14 +594,54 @@ class Form_Handler {
 	}
 
 	/**
+	 * Handle a form posted to Form_No_JS_Submit::post_url().
+	 *
+	 * Runs on admin_init, which admin-post.php fires before it routes on
+	 * $_REQUEST['action']. WordPress builds that from $_GET and $_POST with
+	 * POST winning, so an author's field named `action` would otherwise send
+	 * the request to an action nobody handles.
+	 */
+	public function maybe_handle_post_submission() {
+		global $pagenow;
+
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Routing only; handle_post_submission() verifies the nonce.
+		$action = isset( $_GET['action'] ) && is_string( $_GET['action'] ) ? sanitize_key( wp_unslash( $_GET['action'] ) ) : '';
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? strtoupper( sanitize_key( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) ) : '';
+
+		if ( 'admin-post.php' !== $pagenow || 'POST' !== $method || Form_No_JS_Submit::ACTION !== $action ) {
+			return;
+		}
+
+		$this->handle_post_submission();
+	}
+
+	/**
 	 * Handle non-AJAX form submission via admin_post.
 	 *
 	 * Processes standard form POST and redirects back with a status query param.
 	 */
 	public function handle_post_submission() {
-		// Verify nonce.
-		if ( ! isset( $_POST['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ), 'designsetgo_form_submit' ) ) {
-			wp_die( esc_html__( 'Security verification failed.', 'designsetgo' ), '', array( 'response' => 403 ) );
+		// CSRF: a logged-in visitor must send a valid nonce, so no other site
+		// can submit a form in their name.
+		//
+		// A logged-out visitor's nonce protects nothing: it is the same for
+		// every anonymous visitor and printed in public page HTML, and the
+		// REST endpoint already takes anonymous submissions with no nonce at
+		// all. It is also the one that goes stale, because full-page caches
+		// serve anonymous visitors markup that can be older than a nonce's
+		// ~24h life. Requiring it turned every submission from such a page
+		// into a dead end. Anonymous submissions still pass the honeypot,
+		// timing, rate-limit and Turnstile checks below.
+		$nonce = isset( $_POST['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_POST['_wpnonce'] ) ) : '';
+		if ( is_user_logged_in() && ! wp_verify_nonce( $nonce, Form_No_JS_Submit::ACTION ) ) {
+			wp_die(
+				esc_html__( 'Security verification failed. Please go back, reload the page and try again.', 'designsetgo' ),
+				'',
+				array(
+					'response'  => 403,
+					'back_link' => true,
+				)
+			);
 		}
 
 		$referer = wp_get_referer();
@@ -584,12 +662,14 @@ class Form_Handler {
 			}
 		}
 
-		$system_fields = array( 'dsg_website', 'dsg_form_id', 'dsg_timestamp', 'dsg_turnstile_token', 'dsg_field_types', '_wpnonce', 'action' );
+		$system_fields = array( 'dsg_website', 'dsg_form_id', 'dsg_timestamp', 'dsg_turnstile_token', 'dsg_field_types', '_wpnonce' );
 
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Nonce verified above.
 		foreach ( $_POST as $key => $value ) {
-			// Skip system fields.
-			if ( in_array( $key, $system_fields, true ) ) {
+			// Skip system fields. `action` is ours only when it carries our
+			// value (a page cached before the action moved into the URL);
+			// otherwise it is an author's field.
+			if ( in_array( $key, $system_fields, true ) || ( 'action' === $key && Form_No_JS_Submit::ACTION === $value ) ) {
 				continue;
 			}
 
@@ -619,25 +699,32 @@ class Form_Handler {
 
 		$result = $this->handle_form_submission( $request );
 
-		if ( is_wp_error( $result ) ) {
-			$redirect = add_query_arg(
-				array(
-					'dsgo_form_status' => 'error',
-					'dsgo_form_id'     => $form_id,
-				),
-				$referer
-			);
-		} else {
-			$redirect = $this->get_success_redirect_url( $form_id, $request );
+		$redirect = is_wp_error( $result ) ? '' : $this->get_success_redirect_url( $form_id, $request );
 
-			if ( '' === $redirect ) {
-				$redirect = add_query_arg(
+		if ( is_wp_error( $result ) ) {
+			// Without JavaScript the visitor comes back to a fresh page: keep
+			// their answers, and say why it failed (Form_No_JS_Retry).
+			Form_No_JS_Retry::remember( $form_id, $fields, (string) $result->get_error_code() );
+		}
+
+		if ( '' === $redirect ) {
+			$redirect = add_query_arg(
+				array_merge(
 					array(
-						'dsgo_form_status' => 'success',
+						'dsgo_form_status' => is_wp_error( $result ) ? 'error' : 'success',
 						'dsgo_form_id'     => $form_id,
 					),
-					$referer
-				);
+					is_wp_error( $result ) ? Form_No_JS_Retry::redirect_args( $result ) : array()
+				),
+				// A retry is posted from the previous result's URL: drop its
+				// reason, or a later result would name the earlier field.
+				remove_query_arg( array( 'dsgo_form_error', 'dsgo_form_field' ), $referer )
+			);
+
+			// Land on the result Form_No_JS_Submit prints, not the page top.
+			$anchor = Form_No_JS_Submit::message_anchor( $form_id );
+			if ( '' !== $anchor && false === strpos( $redirect, '#' ) ) {
+				$redirect .= '#' . $anchor;
 			}
 		}
 
@@ -803,9 +890,16 @@ class Form_Handler {
 	 *
 	 * @param string $form_id Form ID.
 	 * @param array  $fields Sanitized fields array.
+	 * @param array  $labels Field labels keyed by name.
 	 * @return int|WP_Error Post ID on success, WP_Error on failure.
 	 */
-	private function store_submission( $form_id, $fields ) {
+	private function store_submission( $form_id, $fields, array $labels = array() ) {
+		foreach ( $fields as $name => $data ) {
+			if ( isset( $labels[ $name ] ) ) {
+				$fields[ $name ]['label'] = $labels[ $name ];
+			}
+		}
+
 		$post_id = wp_insert_post(
 			array(
 				'post_type'   => 'dsgo_form_submission',
@@ -837,7 +931,7 @@ class Form_Handler {
 		update_post_meta( $post_id, '_dsg_form_fields', wp_slash( $fields ) );
 		update_post_meta( $post_id, '_dsg_submission_ip', $this->security->get_client_ip() );
 		update_post_meta( $post_id, '_dsg_submission_user_agent', wp_slash( $this->get_user_agent() ) );
-		update_post_meta( $post_id, '_dsg_submission_referer', wp_slash( wp_get_referer() ) );
+		update_post_meta( $post_id, '_dsg_submission_referer', wp_slash( $this->get_submission_source_url() ) );
 		update_post_meta( $post_id, '_dsg_submission_date', current_time( 'mysql' ) );
 
 		// Clear cached form submission count.
@@ -884,7 +978,7 @@ class Form_Handler {
 				'nonce'        => wp_create_nonce( 'wp_rest' ),
 				'restUrl'      => rest_url( 'designsetgo/v1/form/submit' ),
 				'ajaxUrl'      => admin_url( 'admin-ajax.php' ),
-				'adminPostUrl' => admin_url( 'admin-post.php' ),
+				'adminPostUrl' => Form_No_JS_Submit::post_url(),
 				'ajaxNonce'    => wp_create_nonce( 'designsetgo_form_submit' ),
 				// Sent back as sourcePostId so a form ID shared by several pages
 				// resolves to the copy on this one.
@@ -1181,18 +1275,16 @@ class Form_Handler {
 		update_post_meta( $submission_id, '_dsg_email_to', $email_to );
 		update_post_meta( $submission_id, '_dsg_email_sent_date', current_time( 'mysql' ) );
 
-		// Log email delivery if enabled in settings.
+		// Log delivery status only; recipients and subjects may contain personal data.
 		$form_settings        = $this->get_form_settings();
 		$enable_email_logging = isset( $form_settings['enable_email_logging'] ) ? $form_settings['enable_email_logging'] : false;
 
 		if ( $enable_email_logging ) {
 			error_log( // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Intentional logging when enabled in settings.
 				sprintf(
-					'DesignSetGo Form: Email %s for submission #%d (To: %s, Subject: %s)',
+					'DesignSetGo Form: Email %s for submission #%d',
 					$email_sent ? 'sent successfully' : 'FAILED to send',
-					$submission_id,
-					$email_to,
-					$email_subject
+					$submission_id
 				)
 			);
 		}
@@ -1309,7 +1401,7 @@ class Form_Handler {
 	 *
 	 * @param string $form_id        Form identifier to look up.
 	 * @param int    $source_post_id Page the form was submitted from, or 0.
-	 * @return array{attributes: array, field_types: array, constraints: array, required_fields: string[], rules: array}|null Form definition or null.
+	 * @return array{attributes: array, field_types: array, constraints: array, required_fields: string[], rules: array, labels?: array<string, string>, conditions?: array{fields: string[], conditions: array<string, array>}}|null Form definition or null.
 	 */
 	private function get_form_definition( $form_id, $source_post_id = 0 ) {
 		if ( ! is_string( $form_id ) || '' === $form_id ) {
@@ -1409,18 +1501,48 @@ class Form_Handler {
 	 * Build the server-owned definition for a parsed form block.
 	 *
 	 * @param array $form_block Parsed designsetgo/form-builder block.
-	 * @return array{attributes: array, field_types: array, constraints: array, required_fields: string[], rules: array} Form definition.
+	 * @return array{attributes: array, field_types: array, constraints: array, required_fields: string[], rules: array, labels: array<string, string>, conditions: array{fields: string[], conditions: array<string, array>}} Form definition.
 	 */
 	private function build_form_definition( array $form_block ) {
 		$inner_blocks = isset( $form_block['innerBlocks'] ) ? $form_block['innerBlocks'] : array();
+		$field_types  = $this->extract_field_types_from_blocks( $inner_blocks );
+		$labels       = $this->extract_field_labels_from_blocks( $inner_blocks );
+
+		// The phone field's companion country-code select has no label of its own.
+		foreach ( $field_types as $name => $type ) {
+			$base = substr( $name, 0, -strlen( '_country_code' ) );
+			if ( 'country_code' === $type && isset( $labels[ $base ] ) ) {
+				/* translators: %s: phone field label */
+				$labels[ $name ] = sprintf( __( '%s (country code)', 'designsetgo' ), $labels[ $base ] );
+			}
+		}
 
 		return array(
 			'attributes'      => $this->apply_form_block_defaults( $form_block['attrs'] ),
-			'field_types'     => $this->extract_field_types_from_blocks( $inner_blocks ),
+			'field_types'     => $field_types,
 			'constraints'     => $this->extract_field_value_constraints_from_blocks( $inner_blocks ),
 			'required_fields' => $this->extract_required_field_names_from_blocks( $inner_blocks ),
 			'rules'           => Form_Field_Rules::extract( $inner_blocks ),
+			'labels'          => $labels,
+			'conditions'      => Form_Conditions::extract( $inner_blocks ),
 		);
+	}
+
+	/**
+	 * The page a submission was sent from, for the stored Source URL.
+	 *
+	 * A no-JS retry is posted from the previous result's URL, so drop the
+	 * plugin's own result args: the record should name the page, not an
+	 * earlier failure.
+	 *
+	 * @return string Referer without result args, or '' when there is none.
+	 */
+	private function get_submission_source_url() {
+		$referer = wp_get_referer();
+		if ( ! $referer ) {
+			return '';
+		}
+		return remove_query_arg( array( 'dsgo_form_status', 'dsgo_form_id', 'dsgo_form_error', 'dsgo_form_field' ), $referer );
 	}
 
 	/**
@@ -1768,6 +1890,54 @@ class Form_Handler {
 		}
 
 		return $field_types;
+	}
+
+	/**
+	 * Extract each field's visible label from a form's inner blocks.
+	 *
+	 * A label left at its block.json default is absent from the block comment,
+	 * so the registered default is used. Labels are stored as plain text.
+	 *
+	 * @param array $blocks Parsed inner blocks.
+	 * @return array<string, string> Labels keyed by field name.
+	 */
+	private function extract_field_labels_from_blocks( $blocks ) {
+		$labels = array();
+
+		foreach ( $blocks as $block ) {
+			$block_name = isset( $block['blockName'] ) ? $block['blockName'] : '';
+			$attrs      = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : array();
+			$field_name = isset( $attrs['fieldName'] ) ? sanitize_text_field( $attrs['fieldName'] ) : '';
+
+			if ( $field_name && $this->map_block_name_to_field_type( $block_name ) ) {
+				$label = isset( $attrs['label'] ) && is_string( $attrs['label'] ) ? $attrs['label'] : $this->default_field_label( $block_name );
+				$label = trim( html_entity_decode( wp_strip_all_tags( $label ), ENT_QUOTES, 'UTF-8' ) );
+
+				if ( '' !== $label ) {
+					$labels[ $field_name ] = $label;
+				}
+			}
+
+			if ( ! empty( $block['innerBlocks'] ) ) {
+				$labels = array_merge( $labels, $this->extract_field_labels_from_blocks( $block['innerBlocks'] ) );
+			}
+		}
+
+		return $labels;
+	}
+
+	/**
+	 * Registered default label for a field block.
+	 *
+	 * @param string $block_name Block name.
+	 * @return string Default label, or '' when the block has none.
+	 */
+	private function default_field_label( $block_name ) {
+		$block_type = \WP_Block_Type_Registry::get_instance()->get_registered( $block_name );
+
+		return ( $block_type && isset( $block_type->attributes['label']['default'] ) && is_string( $block_type->attributes['label']['default'] ) )
+			? $block_type->attributes['label']['default']
+			: '';
 	}
 
 	/**

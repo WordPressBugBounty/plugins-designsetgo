@@ -13,7 +13,8 @@
     "value"
   ],
   "parent": [
-    "designsetgo/form-builder"
+    "designsetgo/form-builder",
+    "designsetgo/form-step"
   ],
   "textdomain": "designsetgo",
   "icon": "hidden",
@@ -24,6 +25,10 @@
     "reusable": false
   },
   "attributes": {
+    "dsgoConditions": {
+      "type": "object",
+      "default": null
+    },
     "fieldName": {
       "type": "string",
       "default": ""

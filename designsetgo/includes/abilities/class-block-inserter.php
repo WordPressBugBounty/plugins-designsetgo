@@ -796,6 +796,12 @@ class Block_Inserter {
 		$classes = array();
 		$styles  = array();
 		$data    = array();
+		if ( ! self::is_block_excluded_from_extensions( $block_name ) && isset( $attributes['dsgoLayout'] ) ) {
+			$layout_class = \DesignSetGo\Layout_Support::class_name( $block_name, $attributes['dsgoLayout'] );
+			if ( '' !== $layout_class ) {
+				$classes[] = $layout_class;
+			}
+		}
 
 		// Static blocks need the same animation props as the editor save filter.
 		// Dynamic blocks use this shared helper in their render path instead.
@@ -1219,6 +1225,28 @@ class Block_Inserter {
 			$block_type = \WP_Block_Type_Registry::get_instance()->get_registered( $block_name );
 
 			foreach ( $attributes as $attribute => $value ) {
+				if ( in_array( $attribute, Layout_Updater::ATTRIBUTES, true ) ) {
+					$layout_patch = array( $attribute => $value );
+					$layout_error = Layout_Updater::validate_patch( $block_name, $layout_patch );
+					if ( null !== $layout_error ) {
+						$problems[] = array(
+							'path'   => $block_path,
+							'block'  => $block_name,
+							'reason' => $attribute . ': ' . $layout_error->get_error_message(),
+						);
+						continue;
+					}
+				}
+				if ( 'dsgoLayout' === $attribute ) {
+					$layout = \DesignSetGo\Layout_Support::sanitize( $block_name, $value );
+					if ( is_wp_error( $layout ) ) {
+						$problems[] = array(
+							'path'   => $block_path,
+							'block'  => $block_name,
+							'reason' => $layout->get_error_message(),
+						);
+					}
+				}
 				$blocked = $unsupported_when_set[ $block_name ][ $attribute ] ?? null;
 				if ( null !== $blocked && null !== $value && array() !== $value && '' !== $value ) {
 					$problems[] = array(
@@ -1241,7 +1269,7 @@ class Block_Inserter {
 				// the attribute) is refused rather than escaped: escaping would
 				// store markup save() never produces. Same set as
 				// sanitizeColumnTemplate() in src/blocks/grid/grid-columns.js.
-				if ( 'designsetgo/grid' === $block_name && 'columnTemplate' === $attribute && preg_match( '/[;{}<>"\']|url\s*\(/i', $value ) ) {
+				if ( 'designsetgo/grid' === $block_name && in_array( $attribute, array( 'columnTemplate', 'tabletColumnTemplate', 'mobileColumnTemplate' ), true ) && preg_match( '/[;{}<>"\']|url\s*\(/i', $value ) ) {
 					$problems[] = array(
 						'path'   => $block_path,
 						'block'  => $block_name,
@@ -1366,12 +1394,59 @@ class Block_Inserter {
 				continue;
 			}
 
+			// A form is single-page (fields) or multi-step (steps only), as the
+			// editor enforces. A mix has no layout the view script can show.
+			if ( 'designsetgo/form-builder' === $block_name && self::mixes_form_steps( $children ) ) {
+				$invalid[] = array(
+					'path'   => $child_path,
+					'block'  => $block_name,
+					'reason' => __( 'a form is either single-page (fields only) or multi-step (designsetgo/form-step blocks only). Put every field inside a designsetgo/form-step, or leave the steps out.', 'designsetgo' ),
+				);
+			}
+
 			if ( ! empty( $children ) ) {
 				$invalid = array_merge( $invalid, self::find_invalid_child_placements( $children, $child_path ) );
 			}
 		}
 
 		return $invalid;
+	}
+
+	/**
+	 * Names of a definition list's direct children.
+	 *
+	 * @param array<int, mixed> $children Child definitions.
+	 * @return array<int, string> Block names ('' for a nameless entry).
+	 */
+	private static function child_block_names( array $children ): array {
+		return array_map(
+			static function ( $child ) {
+				return is_array( $child ) ? self::read_definition_name( $child ) : '';
+			},
+			$children
+		);
+	}
+
+	/**
+	 * Whether a form's children are steps.
+	 *
+	 * @param array<int, mixed> $children Child definitions.
+	 * @return bool
+	 */
+	private static function has_form_steps( array $children ): bool {
+		return in_array( 'designsetgo/form-step', self::child_block_names( $children ), true );
+	}
+
+	/**
+	 * Whether a form's children mix steps with other blocks.
+	 *
+	 * @param array<int, mixed> $children Child definitions.
+	 * @return bool
+	 */
+	private static function mixes_form_steps( array $children ): bool {
+		$names = self::child_block_names( $children );
+		return in_array( 'designsetgo/form-step', $names, true )
+			&& array() !== array_diff( $names, array( 'designsetgo/form-step' ) );
 	}
 
 	/**
@@ -1756,6 +1831,11 @@ class Block_Inserter {
 
 		// Coerce attribute types and normalize defaults.
 		$attrs = self::coerce_attribute_types( $block_name, $attributes );
+		// The inline submit button sits outside every step, so a multi-step
+		// form can't use it. The editor switches it to below on split; so do we.
+		if ( 'designsetgo/form-builder' === $block_name && 'inline' === ( $attrs['submitButtonPosition'] ?? null ) && self::has_form_steps( $inner_blocks ) ) {
+			$attrs['submitButtonPosition'] = 'below';
+		}
 		$attrs = self::normalize_block_attributes( $block_name, $attrs );
 		// Apply block.json defaults so the HTML we build matches what save()
 		// would emit from the same parsed attributes, preventing block
@@ -2373,6 +2453,45 @@ class Block_Inserter {
 	 * @return array<string, mixed> Style with skipped groups removed.
 	 */
 	private static function strip_skipped_style_groups( ?\WP_Block_Type $block_type, array $style ): array {
+		// Core may register `style` even without visual supports (e.g. Hotspot
+		// Item in WP 7.1). The editor's style hook returns early for these
+		// blocks; feeding their raw style to the PHP engine invalidates save().
+		// Mirror block-editor/hooks/style.js hasStyleSupport, including its
+		// typography feature checks rather than the whole typography object.
+		if ( null !== $block_type ) {
+			$style_supports = array(
+				'__experimentalBorder',
+				'color',
+				'dimensions',
+				'background',
+				'spacing',
+				'shadow',
+			);
+			$typography     = array(
+				'lineHeight',
+				'fontSize',
+				'__experimentalFontStyle',
+				'__experimentalFontWeight',
+				'__experimentalFontFamily',
+				'textAlign',
+				'textColumns',
+				'__experimentalTextDecoration',
+				'__experimentalWritingMode',
+				'__experimentalTextTransform',
+				'__experimentalLetterSpacing',
+			);
+			$has_support    = false;
+			foreach ( $style_supports as $support ) {
+				$has_support = $has_support || block_has_support( $block_type, array( $support ) );
+			}
+			foreach ( $typography as $feature ) {
+				$has_support = $has_support || block_has_support( $block_type, array( 'typography', $feature ) );
+			}
+			if ( ! $has_support ) {
+				return array();
+			}
+		}
+
 		// Core adds background-image support at render time, not in useBlockProps.save().
 		// Keep the attributes in block JSON, but do not bake render-only CSS into saved HTML.
 		unset( $style['background'] );
@@ -2548,7 +2667,7 @@ class Block_Inserter {
 	 * @param string $block_name Block name (e.g., 'designsetgo/section').
 	 * @return bool True if block has a render callback, false otherwise.
 	 */
-	private static function is_dynamic_block( string $block_name ): bool {
+	public static function is_dynamic_block( string $block_name ): bool {
 		if ( in_array( $block_name, self::HYBRID_BLOCKS, true ) ) {
 			return false;
 		}

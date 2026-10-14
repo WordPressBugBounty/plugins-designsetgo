@@ -1,10 +1,10 @@
 === DesignSetGo ===
-Contributors: justinnealey, ziontrooper
+Contributors: justinnealey, ziontrooper, vnovakovic
 Tags: blocks, gutenberg, form-builder, query-loop, animations
 Requires at least: 6.7
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 2.9.0
+Stable tag: 2.10.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -96,15 +96,43 @@ Yes to both. DesignSetGo blocks work in the Site Editor, templates, and template
 
 == Screenshots ==
 
-1. Scrolling Gallery block with rows of images moving across the page
-2. Scroll Slides block with a topic list that changes the content as you scroll
-3. Grid of feature cards with icons
-4. Slider block showing three slides at a time
-5. Timeline block laying out steps in order
-6. Quick animation controls in the block toolbar
-7. Slider with arrows and dots, and a multi-slide slider below it
+1. A hero section with a morphing image blob, a two-tone heading and animated counters
+2. Hotspot block: pins on a photo that open product details on click
+3. Image Accordion block: photo panels that expand on hover
+4. Dynamic Query block: a filterable post grid with topic buttons, search and live results
+5. Charts, counters and progress bars in a report layout
+6. Flip cards for a team section, with one card turned to show its back
+7. Circular text on a path above image rows that slide as you scroll
+8. Comparison Table block with a highlighted "Most popular" plan
+9. Timeline block with photo markers on alternating sides
+10. Form Builder block: a booking form with side-by-side fields next to a photo card
+11. Editing chart data right in the block settings sidebar
 
 == Changelog ==
+
+= 2.10.0 - 2026-10-13 =
+
+* **New:** Multi-step forms. Use "Split into steps" in a form's Settings (or the Multi-step template) to show a long form one step at a time, with Next / Back and a progress indicator. Next matches your Submit button, Submit takes its place on the last step, and you can set a Progress colour and style each step title. Once the form is sent, only your success message shows. Without JavaScript the form shows as one page.
+* **New:** Form fields can show or hide based on other answers ("Show Company name when Customer type is Business"). Set it under a field's Settings → Conditional logic. Hidden fields are skipped when the form is submitted, even if they're required, and steps whose fields are all hidden are skipped too.
+* **New:** Send each form submission to a webhook (Zapier, Make, a CRM…). Set the URL in the form's Settings panel and a signing secret under DesignSetGo → Settings → Integrations. Failed deliveries retry automatically, each submission shows its delivery status with a Resend option, and the URL field warns you when an address can't receive submissions.
+* **New:** Export form submissions to CSV from the Form Submissions screen, filtered by form and date range. Columns use your field labels (submissions received before this update use field names), and the form filter names the page each form is on.
+* **New:** Layout overrides for Section, Row and Grid, and for the blocks directly inside them. Under the block's Settings, set its size, spacing, gap, position and layering separately for desktop, tablet and mobile.
+* **New:** Grid has Tablet and Mobile Column Templates, so tablets and phones can have uneven column widths too, such as a narrow column beside a wide one.
+* **New:** Custom CSS has Desktop, Tablet and Mobile tabs. Tablet CSS applies at 1024px wide and below, and Mobile CSS at 767px and below.
+* **Improved:** Grids set to two or more columns on mobile now keep the column spans you set, instead of forcing every item to one column. Check those Grids on a phone after updating. Single-column mobile Grids still stack as before, and a Grid with Align Rows on still gives each card one column so their rows line up.
+* **Improved:** The submission details screen shows each field's label alongside its field name, and a ticked checkbox reads "Yes" there and in the CSV export instead of "1".
+* **Improved:** Bundled patterns use fictional company and person names instead of real brands.
+* **Security:** Your Turnstile secret key and form webhook signing secret are no longer shown to AI assistants connected to your site through DesignSetGo's settings tools. They stay hidden, as they already were on the settings screen.
+* **Security:** Form email logs no longer record recipient addresses or subjects, and Map error logs no longer record the address you entered. Both can contain personal details.
+* **Fix:** Forms now send when a visitor's browser has JavaScript turned off or blocked, and show your success or error message afterwards. Before, the answers were lost. If a submission fails, the visitor's answers stay filled in and the message says what to fix, such as a required field left empty.
+* **Fix:** Typing into a block's empty Custom CSS box no longer jumps out of the box after the first letter. Before, only that letter was kept as CSS and the rest of what you typed went into the block's own text.
+* **Fix:** Adding or removing a background video in the editor no longer closes the block's settings and moves you out of the panel you were working in.
+* **Fix:** Screen readers no longer announce the decorative drawing in Icon, Icon List and Icon Button blocks on top of their label.
+* **Fix:** Hotspot markers in the editor now sit exactly where they appear on your site. Before, every marker after the first was shown lower than its real position.
+* **Fix:** An Advanced Heading's font size, line height and letter spacing now apply to the heading, instead of being overridden by your theme's heading styles.
+* **Fix:** Form message boxes, date pickers and dropdowns use your theme's font instead of the browser's default.
+* **Fix:** Outline buttons in the bundled patterns show their label instead of a solid dark box. This also fixes buttons already on your pages.
+* **Fix:** Countdown patterns start 30 days out when inserted, instead of showing "The countdown has ended!".
 
 = 2.9.0 - 2026-09-29 =
 
@@ -220,52 +248,13 @@ Yes to both. DesignSetGo blocks work in the Site Editor, templates, and template
 * **Fix:** Advanced Heading and Hotspot editing is smoother on long pages, duplicating a Text Path no longer breaks the original's shape, and hotspot tooltips sit on their markers instead of drifting away from them.
 * **Fix:** Translations — removed a JavaScript translation catalog whose files were keyed so that WordPress could never load them, and regenerated the translation template.
 
-= 2.6.3 - 2026-08-11 =
-
-* **Fix:** Grid columns with a minimum width set no longer run past the edge of the page. On a theme with a narrower content width, a grid asking for more columns than could fit at that minimum pushed its columns straight out of the content area. The grid now drops to fewer columns and wraps the extra items onto the next row, and still shows your chosen number of columns whenever there's room for them. Existing grids are unchanged.
-* **Fix:** The Overlay Header panel no longer causes an error when editing a template part in the Site Editor. The panel now appears only where the setting actually applies.
-
-= 2.6.2 - 2026-08-05 =
-
-* **Fix:** Sticky and overlay headers keep working on sites that replace page content without a full browser reload — an AI page builder or an AJAX-driven theme, for example. After one of those updates the header stayed where it belonged but stopped fading in its background as you scrolled, and only a full page refresh brought the behaviour back.
-* **Fix:** The footer no longer paints the sticky header's drop shadow across its own top edge when you scroll. Most themes put a navigation menu in the footer, and that alone was enough for the footer to be treated as a second header.
-
-= 2.6.1 - 2026-08-04 =
-
-* **Fix:** Turning on "background on scroll" without choosing a color now gives you your theme's background, rather than no background at all. The header also darkens or lightens its text to match, so it stays readable whichever way your theme's palette runs.
-* **Fix:** Forms on pages served from a full-page cache no longer fail with "Security verification failed. Please refresh the page and try again." A cached page can outlive the security token baked into it, and the form had no way to recover; it now quietly retries and submits successfully.
-* **Fix:** The scrolled sticky/overlay header now picks up your theme's colors instead of always fading in to a near-white bar. Pages using the per-page Overlay Header never reached the code that applies your chosen scroll background, so they fell back to a hardcoded white that looked out of place on darker palettes. The header now prefers your theme's secondary surface color, and in dark mode pairs your palette's contrast and base colors so the text stays readable. Themes that don't define those colors look exactly as they did before, and any scroll background you set explicitly still wins.
-* **Fix:** Forms placed outside the main post content — a newsletter signup in the footer, a form in a template part, synced pattern, or block widget — no longer fail every submission. The form looked and behaved normally right up until Submit, then silently failed because the data it needs to talk to the server was only attached when the form lived in the page's own content.
-
-= 2.6.0 - 2026-07-29 =
-
-* **New:** Theme animation defaults — set an entrance animation once per block type (e.g. all Buttons fade in) under DesignSetGo → Settings → Features → Animations, or in your theme's `theme.json`. Every block of that type inherits it automatically, and any individual block can override it (Custom) or opt out (Off). One rule can target several block types at once, including `namespace/*` wildcards.
-* **Fix:** The per-page Overlay Header is transparent again and no longer pulls page content up by the footer's height. The header height was being measured from the wrong element on themes whose footer also contains a navigation block, which sliced the top off the hero; and the header stayed opaque on themes that paint it from a style variation or `theme.json` rather than a background class. Your first content section now also clears the header while its background still runs behind it.
-* **Fix:** Section shape dividers now honour your theme's divider height and width tokens. Previously a theme (or Style Kit) could set the default divider shape but not its size — the Section block's top/bottom dividers ignored both size tokens. Untouched dividers now inherit the theme's size (and reserve matching content clearance), while any size you set explicitly still wins. The Height/Width sliders gain a Reset that returns them to the theme default. Existing content is unchanged.
-
-= 2.5.1 - 2026-07-23 =
-
-* **New:** Section shape dividers — six new layered, tonal divider shapes: Triangle Layered, Triangle Layered Extra, Curvy Triangle Layered, Symmetric Waves Layered, Side Triangle Layered, and Side Triangle Layered Extra. Each paints as a soft two- or three-tone band that inherits your theme's color by default and can be overridden per section.
-* **Fix:** Section shape-divider spacing is now author-defined, so patterns that set the content clearance with a theme spacing token no longer show an "Attempt Recovery" prompt. A new "Content Clearance" control sets the gap between your content and the divider; existing dividers migrate silently, and a divider with no clearance set automatically reserves space to match its own height.
-
-= 2.5.0 - 2026-07-21 =
-
-* **New:** Grid — an "Align Rows" option that lines up each row of card content (image, heading, text, button) across columns, so cards with different amounts of text stay aligned with no ragged whitespace. Works with Section, Row, and Group cards, and is off by default so existing grids are unchanged.
-* **New:** Form Builder — the submit button now has a Button Style control (Default, Secondary, or Outline), so a form placed on a colored background can use a matching button. Your theme's button style variations apply to it too, and AI-assisted form inserts respect the chosen style.
-* **Fix:** Blocks whose on-screen text is changed by a site translation (or other content tools) no longer show an "Attempt Recovery" prompt. Icon Button, Modal Trigger, Accordion, Timeline, Counter, Card, Table of Contents, Form Builder, and Countdown Timer now treat their visible label as the single source of truth, so translating the text keeps the block valid — and existing content migrates silently.
-* **Fix:** Forms and responsive grids on AI-generated sites no longer show an "Attempt Recovery" prompt. Their saved markup differed slightly from what the current blocks produce; the affected forms and grids now migrate silently and keep their design.
-* **Fix:** Modal — the overlay (backdrop) color now inherits from your theme and can be restyled by a Style Kit, instead of always being baked to black. Modals saved from patterns no longer show an "Attempt Recovery" prompt.
-* **Fix:** Form Builder — an inline (side-by-side) submit button now lines up level with the field beside it, in both the editor and on the frontend, and the loading spinner now shows correctly on styled submit buttons.
-* **Fix:** Cloudflare Turnstile now accepts its tokens. Previously, turning Turnstile on silently broke the form — every protected submission was rejected before it reached the handler.
-* **Fix:** Excluding a third-party block from DesignSetGo's controls now takes effect in the editor. Excluded blocks (such as Gravity Forms) no longer receive DesignSetGo panels or show an "invalid block attributes" error.
-* **Fix:** Query Monitor no longer causes a site error on every page load when its debugging panel is active.
-* **Fix:** Draft Mode — publishing a draft no longer deletes custom fields that were intentionally kept out of the draft copy, so integrations that store their own bookkeeping data keep it across publishes.
-* **Security:** Hardened Draft Mode's post-copy against maliciously deep data and closed a window where a stale, still-open settings form could overwrite a saved API key with its masking placeholder. These strengthen existing protections — no known exploit was involved.
-
-= Earlier releases (2.4.0 and earlier) =
+= Earlier releases (2.6.3 and earlier) =
 
 For the full version history, see [CHANGELOG.md](https://github.com/jnealey-godaddy/designsetgo/blob/main/CHANGELOG.md) in the GitHub repository. Highlights:
 
+* **2.6.x** — Theme animation defaults (set an entrance animation once per block type), sticky and overlay headers that follow your theme's colors and survive AJAX page updates, size tokens for Section shape dividers, Grid columns that wrap instead of overflowing, and forms that work from cached pages and from footers, template parts and widgets.
+* **2.5.1** — Six layered Section shape dividers and a Content Clearance control.
+* **2.5.0** — Grid "Align Rows" option, a Button Style control for the Form Builder submit button, a Modal overlay color that follows your theme, working Cloudflare Turnstile tokens, and fixes for "Attempt Recovery" prompts on translated and AI-generated sites.
 * **2.4.0** — Section Divider block, Fill / Outline icons, theme-driven defaults for icons, forms, maps and SVG patterns, a new Justify control for Pill, Icon, Icon Button and Modal Trigger, safer form notification emails, and many editor and frontend fixes.
 * **2.3.0** — Theme section styles for Section, Row and Grid, site-wide default shape dividers, and redesigned shape dividers.
 * **2.2.0** — Column Min Width for Grid and Icon List, Scrolling Gallery image fit and size controls, silent upgrades for older block markup, and PHP 7.4 support.
@@ -276,6 +265,9 @@ For the full version history, see [CHANGELOG.md](https://github.com/jnealey-goda
 * **1.0–1.2** — Initial public release: 43 blocks + 11 extensions, Map and Card blocks, REST API hardening, 9 translations.
 
 == Upgrade Notice ==
+
+= 2.10.0 =
+Adds multi-step and conditional forms, form webhooks and CSV export, and per-device layout controls. Grids with two or more mobile columns now keep their column spans, so check those on a phone after updating.
 
 = 2.9.0 =
 Security, performance and compatibility update. Purge page/CDN and Markdown caches; check export cleanup, countdown timezones and Turnstile keys. Editing without edit_css can remove per-block custom CSS. Regenerate static exports after cleanup.

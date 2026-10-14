@@ -72,6 +72,23 @@
       "type": "string",
       "default": ""
     },
+    "stepProgress": {
+      "type": "string",
+      "enum": [
+        "steps",
+        "bar",
+        "none"
+      ],
+      "default": "steps"
+    },
+    "stepProgressColor": {
+      "type": "string",
+      "default": ""
+    },
+    "webhookUrl": {
+      "type": "string",
+      "default": ""
+    },
     "fieldSpacing": {
       "type": "string",
       "default": ""

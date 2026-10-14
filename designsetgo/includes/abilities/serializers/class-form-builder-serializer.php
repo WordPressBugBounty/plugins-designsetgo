@@ -143,11 +143,12 @@ class Form_Builder_Serializer {
 		if ( '' !== $field_border_radius && preg_match( '/^\d+(\.\d+)?(px|em|rem|%|vh|vw|vmin|vmax|ch|ex)$/', $field_border_radius ) ) {
 			$style_parts[] = '--dsgo-form-border-radius:' . esc_attr( $field_border_radius );
 		}
-		// Field state colours, after the radius as in save.js.
+		// Field state and step progress colours, after the radius as in save.js.
 		$state_colors = array(
 			'fieldFocusColor'   => '--dsgo-form-focus-color',
 			'fieldErrorColor'   => '--dsgo-form-error-color',
 			'fieldSuccessColor' => '--dsgo-form-success-color',
+			'stepProgressColor' => '--dsgo-form-progress-color',
 		);
 		foreach ( $state_colors as $attribute => $property ) {
 			$value = $attributes[ $attribute ] ?? '';
@@ -182,6 +183,10 @@ class Form_Builder_Serializer {
 		// frontend script reads from the markup, so it belongs here.
 		if ( ! empty( $attributes['redirectUrl'] ) && is_string( $attributes['redirectUrl'] ) ) {
 			$data_attrs[] = 'data-redirect-url="' . esc_url( $attributes['redirectUrl'] ) . '"';
+		}
+		// Multi-step progress style - must match save.js (non-default only).
+		if ( isset( $attributes['stepProgress'] ) && in_array( $attributes['stepProgress'], array( 'bar', 'none' ), true ) ) {
+			$data_attrs[] = 'data-dsgo-step-progress="' . esc_attr( $attributes['stepProgress'] ) . '"';
 		}
 		$data_str = implode( ' ', $data_attrs );
 

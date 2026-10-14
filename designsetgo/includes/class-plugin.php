@@ -355,11 +355,60 @@ class Plugin {
 	public $form_handler;
 
 	/**
+	 * Form critical CSS instance (conditional fields and steps).
+	 *
+	 * @var Blocks\Form_Critical_CSS
+	 */
+	public $form_critical_css;
+
+	/**
+	 * Form step counter instance.
+	 *
+	 * @var Blocks\Form_Step_Counter
+	 */
+	public $form_step_counter;
+
+	/**
+	 * Form submission without JavaScript (admin-post fields and result message).
+	 *
+	 * @var Blocks\Form_No_JS_Submit
+	 */
+	public $form_no_js_submit;
+
+	/**
 	 * Form Submissions instance.
 	 *
 	 * @var Blocks\Form_Submissions
 	 */
 	public $form_submissions;
+
+	/**
+	 * Form webhook delivery instance.
+	 *
+	 * @var Blocks\Form_Webhooks
+	 */
+	public $form_webhooks;
+
+	/**
+	 * Form webhook admin UI instance.
+	 *
+	 * @var Blocks\Form_Webhooks_Admin
+	 */
+	public $form_webhooks_admin;
+
+	/**
+	 * Form submissions export instance.
+	 *
+	 * @var Blocks\Form_Submissions_Export
+	 */
+	public $form_submissions_export;
+
+	/**
+	 * Form submissions list filters instance.
+	 *
+	 * @var Blocks\Form_Submissions_List_Filters
+	 */
+	public $form_submissions_list_filters;
 
 	/**
 	 * Patterns Loader instance.
@@ -635,8 +684,23 @@ class Plugin {
 		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/field-render-helpers.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-security.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-field-rules.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-conditions.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-conditions-submission.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-critical-css.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-step-counter.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-no-js-submit.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-no-js-retry.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-no-js-refill.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-handler.php';
 		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-submissions.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-webhook-status.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-webhook-request.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-webhook-recovery.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-webhooks.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-webhooks-admin.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-submissions-export-columns.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-submissions-export.php';
+		require_once DESIGNSETGO_PATH . 'includes/blocks/forms/class-form-submissions-list-filters.php';
 		// --- Blocks: Modal ---
 		require_once DESIGNSETGO_PATH . 'includes/blocks/modal/class-modal-hooks.php';
 		// --- Blocks: Query engine ---
@@ -707,6 +771,11 @@ class Plugin {
 		require_once DESIGNSETGO_PATH . 'includes/admin/class-block-migrator.php';
 		require_once DESIGNSETGO_PATH . 'includes/admin/class-query-filter-index-admin.php';
 		// --- Render-time features ---
+		require_once DESIGNSETGO_PATH . 'includes/class-custom-css-support.php';
+		require_once DESIGNSETGO_PATH . 'includes/class-layout-expression.php';
+		require_once DESIGNSETGO_PATH . 'includes/class-layout-values.php';
+		require_once DESIGNSETGO_PATH . 'includes/class-layout-support.php';
+		require_once DESIGNSETGO_PATH . 'includes/features/class-layout-renderer.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-custom-css-renderer.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-section-styles.php';
 		require_once DESIGNSETGO_PATH . 'includes/features/class-icon-button-styles.php';
@@ -777,10 +846,17 @@ class Plugin {
 		$this->schema_output          = new SchemaOutput();
 		$this->block_bindings_support = new Block_Bindings_Support();
 		$this->block_bindings_support->register();
-		$this->modal_hooks      = new Blocks\Modal_Hooks();
-		$this->form_handler     = new Blocks\Form_Handler();
-		$this->form_submissions = new Blocks\Form_Submissions();
-		$this->query_controller = new Blocks\Query\Controller();
+		$this->modal_hooks                   = new Blocks\Modal_Hooks();
+		$this->form_handler                  = new Blocks\Form_Handler();
+		$this->form_submissions              = new Blocks\Form_Submissions();
+		$this->form_critical_css             = new Blocks\Form_Critical_CSS();
+		$this->form_step_counter             = new Blocks\Form_Step_Counter();
+		$this->form_no_js_submit             = new Blocks\Form_No_JS_Submit();
+		$this->form_webhooks                 = new Blocks\Form_Webhooks();
+		$this->form_webhooks_admin           = new Blocks\Form_Webhooks_Admin( $this->form_webhooks );
+		$this->form_submissions_export       = new Blocks\Form_Submissions_Export();
+		$this->form_submissions_list_filters = new Blocks\Form_Submissions_List_Filters();
+		$this->query_controller              = new Blocks\Query\Controller();
 		add_action( 'rest_api_init', array( 'DesignSetGo\Blocks\Query\Template_Controller', 'register_routes' ) );
 		add_action( 'rest_api_init', array( 'DesignSetGo\Blocks\Text_Path\Controller', 'register_routes' ) );
 		$this->query_bindings = new Blocks\Query\Bindings();
@@ -794,6 +870,7 @@ class Plugin {
 		$this->block_manager       = new Admin\Block_Manager();
 		$this->gdpr_compliance     = new Admin\GDPR_Compliance();
 		$this->custom_css_renderer = new Custom_CSS_Renderer();
+		new Layout_Renderer();
 		$this->section_styles      = new Section_Styles();
 		$this->section_styles->init();
 		$this->icon_button_styles = new Icon_Button_Styles();

@@ -88,11 +88,11 @@ if ( ! function_exists( 'designsetgo_query_filter_current_value' ) ) :
 	 *
 	 * @param string $param_name Bare URL parameter name.
 	 * @param string $query_id   Sanitized queryId this filter belongs to.
-	 * @return string|array Unslashed, unsanitized value; '' when absent.
+	 * @return string|string[] Unslashed, unsanitized scalar or flat list of scalars; '' when absent.
 	 */
 	function designsetgo_query_filter_current_value( $param_name, $query_id ) {
 		$owned = designsetgo_query_owned_request_params( $query_id );
-		return isset( $owned[ $param_name ] ) ? wp_unslash( $owned[ $param_name ]['value'] ) : '';
+		return isset( $owned[ $param_name ] ) ? designsetgo_query_scalar_param( wp_unslash( $owned[ $param_name ]['value'] ) ) : '';
 	}
 
 endif;
@@ -181,7 +181,7 @@ if ( ! function_exists( 'designsetgo_query_filter_render_sort' ) ) :
 	 * @param string $query_id   Sanitized queryId this filter belongs to.
 	 */
 	function designsetgo_query_filter_render_sort( $wrapper, $param_name, $label, array $options, $query_id = '' ) {
-		$raw     = designsetgo_query_filter_current_value( $param_name, $query_id );
+		$raw = designsetgo_query_filter_current_value( $param_name, $query_id );
 		// Coerce array GET (?sort[]=value) to a scalar so `selected()` compares
 		// a string, not the literal "Array".
 		$raw     = is_array( $raw ) ? ( isset( $raw[0] ) ? $raw[0] : '' ) : $raw;
@@ -257,7 +257,7 @@ if ( ! function_exists( 'designsetgo_query_filter_render_select' ) ) :
 			return;
 		}
 
-		$raw     = designsetgo_query_filter_current_value( $param_name, $query_id );
+		$raw = designsetgo_query_filter_current_value( $param_name, $query_id );
 		// Coerce array GET to scalar for the single-select variation.
 		$raw     = is_array( $raw ) ? ( isset( $raw[0] ) ? $raw[0] : '' ) : $raw;
 		$current = sanitize_title( (string) $raw );
@@ -271,7 +271,7 @@ if ( ! function_exists( 'designsetgo_query_filter_render_select' ) ) :
 				},
 				$terms
 			);
-			$counts = \DesignSetGo\Blocks\Query\FilterIndex::count_for_options(
+			$counts   = \DesignSetGo\Blocks\Query\FilterIndex::count_for_options(
 				$filter_taxonomy,
 				$term_ids,
 				$active_filters,
@@ -371,7 +371,7 @@ if ( ! function_exists( 'designsetgo_query_filter_render_checkbox' ) ) :
 				},
 				$terms
 			);
-			$counts = \DesignSetGo\Blocks\Query\FilterIndex::count_for_options(
+			$counts   = \DesignSetGo\Blocks\Query\FilterIndex::count_for_options(
 				$filter_taxonomy,
 				$term_ids,
 				$active_filters,
@@ -398,8 +398,8 @@ if ( ! function_exists( 'designsetgo_query_filter_render_checkbox' ) ) :
 		}
 
 		// Fix 4: noscript submit so no-JS users can apply checkbox filters.
-		$designsetgo_nojs_btn      = '<noscript><button type="submit" class="dsgo-query-filter__nojs-submit">' . esc_html__( 'Apply filter', 'designsetgo' ) . '</button></noscript>';
-		$list_class_parts   = array( 'dsgo-query-filter__checkbox-list' );
+		$designsetgo_nojs_btn = '<noscript><button type="submit" class="dsgo-query-filter__nojs-submit">' . esc_html__( 'Apply filter', 'designsetgo' ) . '</button></noscript>';
+		$list_class_parts     = array( 'dsgo-query-filter__checkbox-list' );
 		if ( 'horizontal' === $orientation ) {
 			$list_class_parts[] = 'is-horizontal';
 		}
@@ -462,7 +462,7 @@ $designsetgo_filter_orientation = ( isset( $attributes['orientation'] ) && 'hori
 // look of pre-existing saved blocks that have no `filterStyle` attribute.
 // New inserts through the inserter variation opt into `underline` explicitly
 // — see the variation attributes in src/blocks/query-filter/variations.js.
-$designsetgo_filter_style       = isset( $attributes['filterStyle'] ) && in_array( $attributes['filterStyle'], array( 'pill', 'underline' ), true )
+$designsetgo_filter_style = isset( $attributes['filterStyle'] ) && in_array( $attributes['filterStyle'], array( 'pill', 'underline' ), true )
 	? $attributes['filterStyle']
 	: 'default';
 
@@ -508,7 +508,7 @@ foreach ( designsetgo_query_owned_request_params( $designsetgo_query_id ) as $de
 	if ( 0 !== strpos( (string) $designsetgo_k, 'filter_' ) ) {
 		continue;
 	}
-	$designsetgo_vals = array_filter( array_map( 'sanitize_text_field', (array) wp_unslash( $designsetgo_entry['value'] ) ), 'strlen' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitized by the array_map().
+	$designsetgo_vals = array_filter( array_map( 'sanitize_text_field', (array) designsetgo_query_scalar_param( wp_unslash( $designsetgo_entry['value'] ) ) ), 'strlen' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitized by the array_map().
 	if ( $designsetgo_vals ) {
 		$designsetgo_active_filters[ $designsetgo_k ] = array_values( $designsetgo_vals );
 	}
@@ -521,6 +521,7 @@ foreach ( $designsetgo_active_filters as $designsetgo_param_key => $designsetgo_
 	$designsetgo_filter_key = 'filter_' === substr( $designsetgo_param_key, 0, 7 )
 		? substr( $designsetgo_param_key, 7 )
 		: $designsetgo_param_key;
+
 	$designsetgo_active_filters_by_key[ $designsetgo_filter_key ] = $designsetgo_param_values;
 }
 
@@ -547,21 +548,28 @@ if ( class_exists( '\DesignSetGo\Blocks\Query\FilterRegistry' ) ) {
 			continue;
 		}
 		$designsetgo_translated = array();
-		foreach ( (array) $designsetgo_fv as $designsetgo_slug_or_id ) {
-			$designsetgo_slug_or_id = (string) $designsetgo_slug_or_id;
-			if ( ctype_digit( $designsetgo_slug_or_id ) ) {
-				// Already a numeric ID — pass through as-is.
-				$designsetgo_translated[] = $designsetgo_slug_or_id;
-				continue;
+		// URL values are always term slugs (that is what the controls write and
+		// what the query matches on), and `slug,slug` is a documented form.
+		// A numeric slug such as "2024" is a slug, never a term ID: reading it
+		// as an ID would count against whichever unrelated term has that ID.
+		$designsetgo_slugs = array();
+		foreach ( (array) $designsetgo_fv as $designsetgo_raw_value ) {
+			foreach ( explode( ',', (string) $designsetgo_raw_value ) as $designsetgo_piece ) {
+				$designsetgo_piece = sanitize_title( $designsetgo_piece );
+				if ( '' !== $designsetgo_piece ) {
+					$designsetgo_slugs[] = $designsetgo_piece;
+				}
 			}
-			$designsetgo_term = get_term_by( 'slug', $designsetgo_slug_or_id, $designsetgo_iter_taxonomy );
+		}
+		foreach ( array_unique( $designsetgo_slugs ) as $designsetgo_slug ) {
+			$designsetgo_term = get_term_by( 'slug', $designsetgo_slug, $designsetgo_iter_taxonomy );
 			if ( $designsetgo_term instanceof \WP_Term ) {
 				$designsetgo_translated[] = (string) $designsetgo_term->term_id;
 			}
 		}
 		$designsetgo_active_filters_by_key[ $designsetgo_fk ] = $designsetgo_translated;
 	}
-	unset( $designsetgo_registered_filters, $designsetgo_filter_config, $designsetgo_iter_taxonomy, $designsetgo_translated, $designsetgo_slug_or_id, $designsetgo_term );
+	unset( $designsetgo_registered_filters, $designsetgo_filter_config, $designsetgo_iter_taxonomy, $designsetgo_translated, $designsetgo_slugs, $designsetgo_raw_value, $designsetgo_piece, $designsetgo_slug, $designsetgo_term );
 }
 
 // Only render counts when the filter is indexed AND showCounts is enabled.
@@ -588,7 +596,7 @@ $designsetgo_filter_wrapper = get_block_wrapper_attributes( $designsetgo_filter_
 // on values, which would mangle JSON quotes.
 // JSON_HEX_APOS defends the single-quoted attribute boundary against a
 // stray apostrophe in any future context value (today all four are quote-
-// free: sanitize_key / false / esc_url_raw / wp_create_nonce).
+// free: sanitize_key / false / esc_url_raw / a nonce).
 $designsetgo_filter_wrapper .= sprintf(
 	" data-wp-context='%s'",
 	wp_json_encode(
@@ -596,7 +604,7 @@ $designsetgo_filter_wrapper .= sprintf(
 			'queryId' => $designsetgo_query_id,
 			'busy'    => false,
 			'restUrl' => esc_url_raw( rest_url( 'designsetgo/v1/query/render' ) ),
-			'nonce'   => wp_create_nonce( 'wp_rest' ),
+			'nonce'   => function_exists( 'designsetgo_query_rest_nonce' ) ? designsetgo_query_rest_nonce() : ( is_user_logged_in() ? wp_create_nonce( 'wp_rest' ) : '' ), // Visitors get none: a stale one on a cached page is rejected by core.
 		),
 		JSON_HEX_APOS
 	)

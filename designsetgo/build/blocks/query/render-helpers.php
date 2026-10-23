@@ -37,6 +37,28 @@ defined( 'ABSPATH' ) || exit;
 
 require_once __DIR__ . '/param-scoping.php';
 
+if ( ! function_exists( 'designsetgo_query_status_html' ) ) {
+	/**
+	 * The live-region element announcing result counts. Shared by first paint and
+	 * the REST refresh so both emit identical markup.
+	 *
+	 * @param string $query_id    Query id.
+	 * @param int    $total_items Total matching items.
+	 * @return string
+	 */
+	function designsetgo_query_status_html( $query_id, $total_items ) {
+		return sprintf(
+			'<div role="status" aria-live="polite" aria-atomic="true" class="screen-reader-text dsgo-query__status" data-dsgo-query-status="%1$s" data-dsgo-total-items="%2$d" data-dsgo-msg-none="%3$s" data-dsgo-msg-one="%4$s" data-dsgo-msg-many="%5$s"></div>',
+			esc_attr( $query_id ),
+			(int) $total_items,
+			esc_attr__( 'No results found', 'designsetgo' ),
+			esc_attr__( '1 result found', 'designsetgo' ),
+			/* translators: %d: number of results */
+			esc_attr__( '%d results found', 'designsetgo' )
+		);
+	}
+}
+
 if ( ! function_exists( 'designsetgo_safe_css_value' ) ) :
 
 	/**
@@ -295,7 +317,7 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 			'itemTagName'          => 'li',
 			'emitSchema'           => true,
 			'relationshipField'    => '',
-			'relationshipFallback' => 'empty', // empty, all, or parent.
+			'relationshipFallback' => 'empty', // One of 'empty', 'all' or 'parent'.
 			'groupBy'              => null,
 		);
 		return wp_parse_args( $attributes, $defaults );
@@ -400,13 +422,13 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 		// query-results/style.scss.
 		$columns        = isset( $atts['columns'] ) ? max( 1, (int) $atts['columns'] ) : 1;
 		$columns_tablet = isset( $atts['columnsTablet'] ) ? (int) $atts['columnsTablet'] : 0;
-		$columns_mobile   = isset( $atts['columnsMobile'] ) ? (int) $atts['columnsMobile'] : 0;
-		$first_col_span   = isset( $atts['firstItemColumnSpan'] ) ? max( 1, (int) $atts['firstItemColumnSpan'] ) : 1;
-		$first_row_span   = isset( $atts['firstItemRowSpan'] ) ? max( 1, (int) $atts['firstItemRowSpan'] ) : 1;
+		$columns_mobile = isset( $atts['columnsMobile'] ) ? (int) $atts['columnsMobile'] : 0;
+		$first_col_span = isset( $atts['firstItemColumnSpan'] ) ? max( 1, (int) $atts['firstItemColumnSpan'] ) : 1;
+		$first_row_span = isset( $atts['firstItemRowSpan'] ) ? max( 1, (int) $atts['firstItemRowSpan'] ) : 1;
 		// Clamp the column span to the desktop column count so we never ask the
 		// grid to span more tracks than exist.
-		$first_col_span   = min( $first_col_span, $columns );
-		$grid_style       = sprintf( '--dsgo-query-columns:%d;', $columns );
+		$first_col_span = min( $first_col_span, $columns );
+		$grid_style     = sprintf( '--dsgo-query-columns:%d;', $columns );
 		if ( $columns_tablet > 0 ) {
 			$grid_style .= sprintf( '--dsgo-query-columns-tablet:%d;', $columns_tablet );
 		}
@@ -458,7 +480,7 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 			? sanitize_html_class( (string) $atts['layoutVariant'] )
 			: '';
 		$variant_class  = '' !== $layout_variant ? ' is-layout-' . $layout_variant : '';
-		$attrs_string = sprintf(
+		$attrs_string   = sprintf(
 			'class="%1$s" style="%3$s" data-dsgo-query-results-role="container" data-dsgo-query-id="%2$s"',
 			esc_attr( 'dsgo-query-results dsgo-query-results--source-' . $source . $variant_class ),
 			esc_attr( $query_id ),
@@ -634,6 +656,33 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 	}
 
 	/**
+	 * The Interactivity context a Query region carries for view.js.
+	 *
+	 * A random-order Query also carries the seed its first paint used, so Load
+	 * more continues the same shuffle instead of repeating and skipping posts.
+	 *
+	 * @param string $query_id Unique query identifier.
+	 * @param string $source   Query source.
+	 * @param int    $page     Current page number.
+	 * @return array
+	 */
+	function designsetgo_query_region_context( $query_id, $source, $page ) {
+		$context = array(
+			'queryId' => $query_id,
+			'source'  => $source,
+			'page'    => $page,
+			'busy'    => false,
+			'restUrl' => esc_url_raw( rest_url( 'designsetgo/v1/query/render' ) ),
+			'nonce'   => designsetgo_query_rest_nonce(),
+		);
+		$seeds   = isset( $GLOBALS['designsetgo_query_rand_seeds'] ) ? (array) $GLOBALS['designsetgo_query_rand_seeds'] : array();
+		if ( ! empty( $seeds[ (string) $query_id ] ) ) {
+			$context['seed'] = (int) $seeds[ (string) $query_id ];
+		}
+		return $context;
+	}
+
+	/**
 	 * Retrieve the last-render state for a Query ID.
 	 *
 	 * @param string $query_id Unique query identifier.
@@ -694,6 +743,12 @@ if ( ! function_exists( 'designsetgo_query_render' ) ) :
 		$query_id        = sanitize_key( (string) $context['query_id'] );
 		$full_inner_html = (string) $context['inner_html'];
 		$parsed_children = function_exists( 'parse_blocks' ) ? parse_blocks( $full_inner_html ) : array();
+
+		// The container below builds its own render context, so a Load more
+		// request's shuffle seed is handed to the posts query by Query ID.
+		if ( ! empty( $context['rand_seed'] ) ) {
+			$GLOBALS['designsetgo_query_requested_rand_seeds'][ $query_id ] = absint( $context['rand_seed'] );
+		}
 
 		// Delegate to the shared container renderer. The REST path has no outer
 		// block wrapper (no $block instance), so we emit a simple class-only
@@ -757,8 +812,8 @@ if ( ! function_exists( 'designsetgo_query_render_container' ) ) :
 		// opt in). Only the first match is used; multiple hosts aren't supported.
 		// Its attrs govern presentation (columns, tagName, groupBy...) and its
 		// innerBlocks form the per-item template.
-		$host_block_names   = designsetgo_query_item_host_block_names();
-		$results_child      = null;
+		$host_block_names    = designsetgo_query_item_host_block_names();
+		$results_child       = null;
 		$results_child_index = null;
 		foreach ( $parsed_children as $child_index => $child ) {
 			if ( in_array( ( $child['blockName'] ?? '' ), $host_block_names, true ) ) {
@@ -787,20 +842,20 @@ if ( ! function_exists( 'designsetgo_query_render_container' ) ) :
 			$effective_attrs = array_merge(
 				$attributes,
 				array(
-					'tagName'       => $results_attrs['tagName'] ?? ( $attributes['tagName'] ?? 'ul' ),
+					'tagName'             => $results_attrs['tagName'] ?? ( $attributes['tagName'] ?? 'ul' ),
 					// Non-grid hosts (slider, scroll-slides) wrap items with
 					// their own outer element (slide, scroll-slide). Suppress
 					// render_item()'s <li> wrapper so we don't double-wrap.
-					'itemTagName'   => $is_grid_host
+					'itemTagName'         => $is_grid_host
 						? ( $results_attrs['itemTagName'] ?? ( $attributes['itemTagName'] ?? 'li' ) )
 						: 'none',
-					'columns'       => $results_attrs['columns'] ?? ( $attributes['columns'] ?? 1 ),
-					'columnsTablet' => $results_attrs['columnsTablet'] ?? ( $attributes['columnsTablet'] ?? 0 ),
+					'columns'             => $results_attrs['columns'] ?? ( $attributes['columns'] ?? 1 ),
+					'columnsTablet'       => $results_attrs['columnsTablet'] ?? ( $attributes['columnsTablet'] ?? 0 ),
 					'columnsMobile'       => $results_attrs['columnsMobile'] ?? ( $attributes['columnsMobile'] ?? 0 ),
 					'firstItemColumnSpan' => $results_attrs['firstItemColumnSpan'] ?? ( $attributes['firstItemColumnSpan'] ?? 1 ),
 					'firstItemRowSpan'    => $results_attrs['firstItemRowSpan'] ?? ( $attributes['firstItemRowSpan'] ?? 1 ),
 					'groupBy'             => $results_attrs['groupBy'] ?? ( $attributes['groupBy'] ?? null ),
-					'layoutVariant' => $results_attrs['layoutVariant'] ?? ( $attributes['layoutVariant'] ?? '' ),
+					'layoutVariant'       => $results_attrs['layoutVariant'] ?? ( $attributes['layoutVariant'] ?? '' ),
 					// Carry the child's `style` attribute forward so
 					// designsetgo_query_wrap() can translate
 					// `style.spacing.blockGap` into `--wp--style--block-gap`
@@ -808,7 +863,7 @@ if ( ! function_exists( 'designsetgo_query_render_container' ) ) :
 					// editor respects block-gap (via useBlockProps) but the
 					// frontend falls back to the 1.5rem default because the
 					// grid is constructed without get_block_wrapper_attributes.
-					'style'         => $results_attrs['style'] ?? ( $attributes['style'] ?? null ),
+					'style'               => $results_attrs['style'] ?? ( $attributes['style'] ?? null ),
 				)
 			);
 			$inner_children  = (array) ( $results_child['innerBlocks'] ?? array() );
@@ -879,24 +934,13 @@ if ( ! function_exists( 'designsetgo_query_render_container' ) ) :
 			if ( ! $results_child ) {
 				$children_html_direct = (string) $result['html'];
 				$blobs                = designsetgo_query_render_blobs( $query_id, $attributes, $parsed_children, $refresh_source_post_id );
-				$status               = sprintf(
-					'<div role="status" aria-live="polite" aria-atomic="true" class="screen-reader-text dsgo-query__status" data-dsgo-query-status="%1$s" data-dsgo-total-items="%2$d"></div>',
-					esc_attr( $query_id ),
-					(int) $total_items
-				);
+				$status               = designsetgo_query_status_html( $query_id, $total_items );
 				$wp_context_legacy    = wp_json_encode(
-					array(
-						'queryId' => $query_id,
-						'source'  => $source,
-						'page'    => (int) $page,
-						'busy'    => false,
-						'restUrl' => esc_url_raw( rest_url( 'designsetgo/v1/query/render' ) ),
-						'nonce'   => designsetgo_query_rest_nonce(),
-					),
+					designsetgo_query_region_context( $query_id, $source, (int) $page ),
 					JSON_HEX_APOS
 				);
 				$iapi_attrs_legacy    = sprintf(
-					'data-dsgo-query-id="%1$s" data-dsgo-query-region="%1$s" data-wp-interactive="%2$s" data-wp-context=\'%3$s\' aria-live="polite"',
+					'data-dsgo-query-id="%1$s" data-dsgo-query-region="%1$s" data-wp-interactive="%2$s" data-wp-context=\'%3$s\'',
 					esc_attr( $query_id ),
 					esc_attr( 'designsetgo/query' ),
 					$wp_context_legacy // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- JSON_HEX_APOS output is safe in single-quoted attr.
@@ -969,19 +1013,15 @@ if ( ! function_exists( 'designsetgo_query_render_container' ) ) :
 		// IAPI + state-announcement markup. Appended to the block wrapper so
 		// view.js has a single refresh target.
 		$wp_context = wp_json_encode(
-			array(
-				'queryId' => $query_id,
-				'source'  => $source,
-				'page'    => (int) $page,
-				'busy'    => false,
-				'restUrl' => esc_url_raw( rest_url( 'designsetgo/v1/query/render' ) ),
-				'nonce'   => designsetgo_query_rest_nonce(),
-			),
+			designsetgo_query_region_context( $query_id, $source, (int) $page ),
 			JSON_HEX_APOS
 		);
 
+		// No aria-live on the region: a live region that wraps the list, filters
+		// and pagination makes screen readers read all of it on every swap. The
+		// one polite status element below announces the result count instead.
 		$iapi_attrs = sprintf(
-			'data-dsgo-query-id="%1$s" data-dsgo-query-region="%1$s" data-wp-interactive="%2$s" data-wp-context=\'%3$s\' aria-live="polite"',
+			'data-dsgo-query-id="%1$s" data-dsgo-query-region="%1$s" data-wp-interactive="%2$s" data-wp-context=\'%3$s\'',
 			esc_attr( $query_id ),
 			esc_attr( 'designsetgo/query' ),
 			$wp_context // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- JSON_HEX_APOS output is safe in single-quoted attr.
@@ -991,11 +1031,7 @@ if ( ! function_exists( 'designsetgo_query_render_container' ) ) :
 
 		// Signed definition the public refresh route renders from.
 		$blobs  = designsetgo_query_render_blobs( $query_id, $attributes, $parsed_children, $refresh_source_post_id );
-		$status = sprintf(
-			'<div role="status" aria-live="polite" aria-atomic="true" class="screen-reader-text dsgo-query__status" data-dsgo-query-status="%1$s" data-dsgo-total-items="%2$d"></div>',
-			esc_attr( $query_id ),
-			(int) $total_items
-		);
+		$status = designsetgo_query_status_html( $query_id, $total_items );
 
 		return sprintf(
 			'<div %1$s>%2$s%3$s%4$s</div>',
@@ -1036,11 +1072,144 @@ if ( ! function_exists( 'designsetgo_query_render_blobs' ) ) :
 			}
 		}
 
-		$signed = \DesignSetGo\Blocks\Query\RefreshSource::sign( $query_id, $attributes, $inner_blocks, (int) $source_post_id );
+		// Record only the facts this query reads. A fact that varies per page
+		// (the current post, an archive's term) would otherwise give every page
+		// its own stored definition for queries that never look at it.
+		$page_context = designsetgo_query_request_context();
+		if ( empty( $attributes['excludeCurrent'] ) ) {
+			$page_context['currentPostId'] = 0;
+		}
+		if ( 'current' !== ( $attributes['source'] ?? 'posts' ) ) {
+			$page_context['inheritedVars'] = array();
+		}
+
+		$signed = \DesignSetGo\Blocks\Query\RefreshSource::sign( $query_id, $attributes, $inner_blocks, (int) $source_post_id, $page_context );
 
 		return '<div hidden class="dsgo-query__blobs" data-dsgo-blobs-for="' . esc_attr( $query_id ) . '"'
 			. ' data-dsgo-refresh-source="' . esc_attr( $signed['source'] ) . '"'
 			. ' data-dsgo-signature="' . esc_attr( $signed['signature'] ) . '"></div>';
+	}
+
+endif;
+
+if ( ! function_exists( 'designsetgo_query_paginate_totals' ) ) :
+
+	/**
+	 * Item and page totals once the block's fixed offset is taken out.
+	 *
+	 * WP_Query / WP_User_Query / get_terms report every match, including the
+	 * rows the offset skips, so their totals overcount: pagination offered
+	 * empty last pages, and an offset at or past the total never reached "no
+	 * results". Pages are walked at offset + (page - 1) * perPage, so the
+	 * skipped rows are never reachable and must not be counted.
+	 *
+	 * @param int $found    Matches reported by the query, offset ignored.
+	 * @param int $offset   The block's offset attribute.
+	 * @param int $per_page Items per page; 0 or less means one unpaged page.
+	 * @return array{totalItems: int, totalPages: int}
+	 */
+	function designsetgo_query_paginate_totals( $found, $offset, $per_page ) {
+		$total = max( 0, (int) $found - max( 0, (int) $offset ) );
+		if ( $per_page < 1 ) {
+			$pages = $total > 0 ? 1 : 0;
+		} else {
+			$pages = (int) ceil( $total / $per_page );
+		}
+
+		return array(
+			'totalItems' => $total,
+			'totalPages' => $pages,
+		);
+	}
+
+endif;
+
+if ( ! function_exists( 'designsetgo_query_inheritable_vars' ) ) :
+
+	/**
+	 * The query vars the Current source may inherit from an archive.
+	 *
+	 * @return string[]
+	 */
+	function designsetgo_query_inheritable_vars() {
+		$vars = array( 'post_type', 'category_name', 'cat', 'tag', 'tag_id', 'author_name', 'author', 'year', 'monthnum', 'day', 's', 'taxonomy', 'term' );
+		foreach ( get_taxonomies( array( 'public' => true ), 'objects' ) as $taxonomy ) {
+			if ( is_string( $taxonomy->query_var ) && '' !== $taxonomy->query_var ) {
+				$vars[] = $taxonomy->query_var;
+			}
+		}
+
+		return array_values( array_unique( $vars ) );
+	}
+
+endif;
+
+if ( ! function_exists( 'designsetgo_query_sanitize_request_context' ) ) :
+
+	/**
+	 * Reduce a request context to the allowlisted, non-empty scalar facts.
+	 *
+	 * Empty values are dropped: WP_Query fills every query var with '' / 0 /
+	 * array(), and inheriting those would blank out the block's own settings.
+	 *
+	 * @param array $context Raw context.
+	 * @return array{currentPostId: int, inheritedVars: array<string, string|int|array>}
+	 */
+	function designsetgo_query_sanitize_request_context( array $context ) {
+		$raw       = isset( $context['inheritedVars'] ) && is_array( $context['inheritedVars'] ) ? $context['inheritedVars'] : array();
+		$inherited = array();
+		foreach ( designsetgo_query_inheritable_vars() as $name ) {
+			if ( ! isset( $raw[ $name ] ) ) {
+				continue;
+			}
+			$value = $raw[ $name ];
+			if ( is_array( $value ) ) {
+				$value = array_values( array_filter( $value, 'is_scalar' ) );
+				if ( array() === $value ) {
+					continue;
+				}
+			} elseif ( ! is_scalar( $value ) || '' === (string) $value || '0' === (string) $value ) {
+				continue;
+			}
+			$inherited[ $name ] = $value;
+		}
+
+		return array(
+			'currentPostId' => isset( $context['currentPostId'] ) ? absint( $context['currentPostId'] ) : 0,
+			'inheritedVars' => $inherited,
+		);
+	}
+
+endif;
+
+if ( ! function_exists( 'designsetgo_query_request_context' ) ) :
+
+	/**
+	 * Page facts a query reads from the request, as a plain array.
+	 *
+	 * "Exclude current post" and the Current source (archive inheritance) read
+	 * the page's main query. A REST refresh has no such page, so first paint
+	 * records these facts in the signed definition and the refresh route
+	 * replays them through $GLOBALS['designsetgo_query_request_context'].
+	 *
+	 * @return array{currentPostId: int, inheritedVars: array<string, string|int|array>}
+	 */
+	function designsetgo_query_request_context() {
+		if ( isset( $GLOBALS['designsetgo_query_request_context'] ) && is_array( $GLOBALS['designsetgo_query_request_context'] ) ) {
+			return designsetgo_query_sanitize_request_context( $GLOBALS['designsetgo_query_request_context'] );
+		}
+
+		$vars = array();
+		if ( isset( $GLOBALS['wp_query'] ) && $GLOBALS['wp_query'] instanceof WP_Query && is_array( $GLOBALS['wp_query']->query_vars ) ) {
+			$vars = $GLOBALS['wp_query']->query_vars;
+		}
+
+		return designsetgo_query_sanitize_request_context(
+			array(
+				'currentPostId' => is_singular() ? (int) get_queried_object_id() : 0,
+				'inheritedVars' => $vars,
+			)
+		);
 	}
 
 endif;

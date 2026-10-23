@@ -132,7 +132,7 @@ class Block_Configurator {
 	 * @return array<string, mixed>|WP_Error Success data or error.
 	 */
 	public static function update_block_attributes( int $post_id, string $block_name, array $attributes, ?string $client_id = null, bool $update_all = false ) {
-		return self::transform_block_attributes( $post_id, $block_name, static fn( $existing ) => $attributes, $client_id, $update_all ); // phpcs:ignore VariableAnalysis.CodeAnalysis.VariableAnalysis.UnusedVariable -- Callback signature.
+		return self::transform_block_attributes( $post_id, $block_name, static fn() => $attributes, $client_id, $update_all );
 	}
 
 	/**
@@ -226,7 +226,9 @@ class Block_Configurator {
 		if ( 0 === $updated_count ) {
 			return new WP_Error(
 				'designsetgo_block_not_found',
-				__( 'No matching blocks found to update.', 'designsetgo' ),
+				null !== $client_id
+					? __( 'No matching blocks found to update. block_client_id only matches a clientId attribute stored in the post, which most blocks do not have; omit it, or use block_index.', 'designsetgo' )
+					: __( 'No matching blocks found to update.', 'designsetgo' ),
 				array( 'status' => 404 )
 			);
 		}
@@ -632,7 +634,7 @@ class Block_Configurator {
 			),
 			'block_client_id' => array(
 				'type'        => 'string',
-				'description' => __( 'Specific block client ID to update (optional)', 'designsetgo' ),
+				'description' => __( 'Only blocks whose stored clientId attribute equals this. Blocks are not saved with a clientId unless something wrote one, so on most content this matches nothing: prefer block_index (from get-post-blocks) where the ability supports it.', 'designsetgo' ),
 			),
 			'update_all'      => array(
 				'type'        => 'boolean',
@@ -844,8 +846,8 @@ class Block_Configurator {
 						$layout_error = $synced;
 						return $blocks;
 					}
-					$block          = $synced;
-					$updated        = true;
+					$block   = $synced;
+					$updated = true;
 				}
 
 				++$counter;

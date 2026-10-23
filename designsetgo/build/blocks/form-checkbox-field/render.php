@@ -28,6 +28,8 @@ if ( ! function_exists( 'designsetgo_render_form_checkbox_field' ) ) {
 	 * @return void
 	 */
 	function designsetgo_render_form_checkbox_field( $attributes, $content, $block ) {
+		unset( $content, $block );
+
 		$field_name         = isset( $attributes['fieldName'] ) ? (string) $attributes['fieldName'] : '';
 		$label              = isset( $attributes['label'] ) ? (string) $attributes['label'] : '';
 		$help_text          = isset( $attributes['helpText'] ) ? (string) $attributes['helpText'] : '';
@@ -54,7 +56,7 @@ if ( ! function_exists( 'designsetgo_render_form_checkbox_field' ) ) {
 
 		$label_html = '<label for="' . esc_attr( $field_id ) . '" class="dsgo-form-field__checkbox-label"><span>' . wp_kses_post( $label ) . '</span>';
 		if ( $required ) {
-			$label_html .= '<span class="dsgo-form-field__required" aria-label="required"> *</span>';
+			$label_html .= '<span class="dsgo-form-field__required" aria-hidden="true"> *</span>';
 		}
 		$label_html .= '</label>';
 

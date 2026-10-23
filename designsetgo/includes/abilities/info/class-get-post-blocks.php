@@ -52,7 +52,7 @@ class Get_Post_Blocks extends Abstract_Ability {
 				'readonly'     => true,
 				'destructive'  => false,
 				'idempotent'   => true,
-				'instructions' => 'Use this to inspect existing blocks in a post before making changes. Returns block indices needed for configurator and delete abilities.',
+				'instructions' => 'Use this to inspect existing blocks in a post before making changes. Returns blockIndex and blockPath values needed for configurator, delete, and add-child-block abilities. Both are positions in the complete post, so they stay valid when block_name, include_inner, or flatten narrows the response.',
 			),
 		);
 	}
@@ -125,6 +125,10 @@ class Get_Post_Blocks extends Abstract_Ability {
 							'attrs'       => array( 'type' => 'object' ),
 							'innerBlocks' => array( 'type' => 'array' ),
 							'innerHTML'   => array( 'type' => 'string' ),
+							'depth'       => array(
+								'type'        => 'integer',
+								'description' => __( 'Nesting depth in the post (0 = top level). Present only when flatten is true.', 'designsetgo' ),
+							),
 						),
 					),
 				),
@@ -181,13 +185,9 @@ class Get_Post_Blocks extends Abstract_Ability {
 		// Parse blocks from post content.
 		$blocks = parse_blocks( $post->post_content );
 
-		// Filter out empty blocks (whitespace-only).
-		$blocks = array_filter(
-			$blocks,
-			function ( $block ) {
-				return ! empty( $block['blockName'] );
-			}
-		);
+		// Assign document identities before filtering, flattening, or hiding children.
+		// Configurators resolve these indices and paths against the complete post.
+		$blocks = $this->clean_blocks_for_output( $blocks );
 
 		// Filter by block name if specified.
 		if ( $block_name ) {
@@ -210,9 +210,6 @@ class Get_Post_Blocks extends Abstract_Ability {
 			$blocks = $this->flatten_blocks( $blocks );
 		}
 
-		// Clean up blocks for output.
-		$blocks = $this->clean_blocks_for_output( array_values( $blocks ) );
-
 		return array(
 			'success' => true,
 			'post_id' => $post_id,
@@ -223,6 +220,9 @@ class Get_Post_Blocks extends Abstract_Ability {
 
 	/**
 	 * Filter blocks by name, including searching inner blocks.
+	 *
+	 * A matching block is returned with its subtree, which is not searched
+	 * further, so a match nested inside another match is not listed twice.
 	 *
 	 * @param array<int, array<string, mixed>> $blocks     Blocks to filter.
 	 * @param string                           $block_name Block name to filter by.
@@ -247,22 +247,24 @@ class Get_Post_Blocks extends Abstract_Ability {
 	/**
 	 * Flatten nested block structure to a single-level array.
 	 *
+	 * Depth comes from blockPath, so it is the block's depth in the post even
+	 * when a block_name filter made it a root of the response.
+	 *
 	 * @param array<int, array<string, mixed>> $blocks Blocks to flatten.
-	 * @param int                              $depth  Current depth level.
 	 * @return array<int, array<string, mixed>> Flattened blocks.
 	 */
-	private function flatten_blocks( array $blocks, int $depth = 0 ): array {
+	private function flatten_blocks( array $blocks ): array {
 		$flat = array();
 
 		foreach ( $blocks as $block ) {
-			$block['_depth'] = $depth;
-			$inner_blocks    = $block['innerBlocks'] ?? array();
+			$block['depth'] = substr_count( $block['blockPath'], '.' );
+			$inner_blocks   = $block['innerBlocks'] ?? array();
 			unset( $block['innerBlocks'] );
 
 			$flat[] = $block;
 
 			if ( ! empty( $inner_blocks ) ) {
-				$flat = array_merge( $flat, $this->flatten_blocks( $inner_blocks, $depth + 1 ) );
+				$flat = array_merge( $flat, $this->flatten_blocks( $inner_blocks ) );
 			}
 		}
 
@@ -285,6 +287,11 @@ class Get_Post_Blocks extends Abstract_Ability {
 		$ordinal = 0;
 
 		foreach ( $blocks as $block ) {
+			// Match the configurators' indexing of named blocks at every depth.
+			if ( empty( $block['blockName'] ) ) {
+				continue;
+			}
+
 			$path = '' === $path_prefix ? (string) $ordinal : $path_prefix . '.' . $ordinal;
 			++$ordinal;
 
@@ -306,11 +313,6 @@ class Get_Post_Blocks extends Abstract_Ability {
 			// Include cleaned inner blocks if present.
 			if ( ! empty( $block['innerBlocks'] ) ) {
 				$cleaned['innerBlocks'] = $this->clean_blocks_for_output( $block['innerBlocks'], $counter, $path );
-			}
-
-			// Include depth if flattened.
-			if ( isset( $block['_depth'] ) ) {
-				$cleaned['depth'] = $block['_depth'];
 			}
 
 			$result[] = $cleaned;

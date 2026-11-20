@@ -12,7 +12,10 @@
     "tooltip",
     "marker",
     "annotated",
-    "product tour"
+    "product tour",
+    "shop the look",
+    "floor plan",
+    "interactive image"
   ],
   "textdomain": "designsetgo",
   "icon": "location-alt",

@@ -14,7 +14,9 @@
     "line",
     "donut",
     "pie",
-    "statistics"
+    "statistics",
+    "infographic",
+    "annual report"
   ],
   "textdomain": "designsetgo",
   "icon": "chart-bar",

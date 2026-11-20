@@ -11,7 +11,9 @@
     "dynamic",
     "featured",
     "acf",
-    "tag"
+    "tag",
+    "author photo",
+    "profile picture"
   ],
   "textdomain": "designsetgo",
   "icon": "format-image",

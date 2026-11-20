@@ -13,7 +13,9 @@
     "curve",
     "zigzag",
     "separator",
-    "section"
+    "section",
+    "wavy edge",
+    "curved edge"
   ],
   "textdomain": "designsetgo",
   "attributes": {

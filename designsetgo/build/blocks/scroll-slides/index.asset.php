@@ -12,5 +12,5 @@
 		'wp-primitives',
 		'wp-url'
 	),
-	'version' => '6d25d2af32668a40ffc0'
+	'version' => 'cbc6aeee6bc71f5290c2'
 );

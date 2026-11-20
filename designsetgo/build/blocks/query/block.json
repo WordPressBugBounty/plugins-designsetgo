@@ -12,7 +12,13 @@
     "posts",
     "dynamic",
     "grid",
-    "listing"
+    "listing",
+    "blog",
+    "latest posts",
+    "news",
+    "articles",
+    "directory",
+    "archive"
   ],
   "textdomain": "designsetgo",
   "icon": "editor-table",

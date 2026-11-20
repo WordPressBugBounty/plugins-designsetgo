@@ -4,14 +4,17 @@
   "name": "designsetgo/comparison-table",
   "version": "1.0.0",
   "title": "Comparison Table",
-  "category": "designsetgo",
-  "description": "Display a feature comparison table for products, services, or plans",
+  "category": "text",
+  "description": "Feature comparison table with check/cross marks across products, services, or plans. Use for pricing plan comparisons and 'us vs them' sections.",
   "keywords": [
     "comparison",
+    "compare",
     "table",
     "pricing",
+    "plans",
     "features",
-    "plans"
+    "versus",
+    "vs"
   ],
   "textdomain": "designsetgo",
   "icon": "editor-table",

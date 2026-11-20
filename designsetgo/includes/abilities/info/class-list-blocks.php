@@ -53,7 +53,7 @@ class List_Blocks extends Abstract_Ability {
 				'readonly'     => true,
 				'destructive'  => false,
 				'idempotent'   => true,
-				'instructions' => 'Returns all DesignSetGo blocks with their attributes and metadata. Each block reports both `category` (the block editor category it registers into, almost always "designsetgo") and `group` (the plugin\'s own grouping: containers, ui, interactive, widgets, forms, or uncategorized). Filter with `group`, not `category` — `category` is near-uniform across the library and will not narrow anything. Use detail "full" with specific block names for complete attribute definitions.',
+				'instructions' => 'Returns all DesignSetGo blocks with their attributes and metadata. Each block reports both `category` (the core block editor category it registers into, matching the core block it stands in for: design, media, text, widgets, or theme) and `group` (the plugin\'s own grouping: containers, ui, interactive, widgets, forms, or uncategorized). Filter with `group` to narrow DesignSetGo blocks. Use detail "full" with specific block names for complete attribute definitions.',
 			),
 		);
 	}
@@ -121,9 +121,14 @@ class List_Blocks extends Abstract_Ability {
 								'type'        => 'string',
 								'description' => __( 'Block description', 'designsetgo' ),
 							),
+							'keywords'    => array(
+								'type'        => 'array',
+								'items'       => array( 'type' => 'string' ),
+								'description' => __( 'Search terms the block answers to, including the core block it stands in for (e.g. "group", "columns", "faq").', 'designsetgo' ),
+							),
 							'category'    => array(
 								'type'        => 'string',
-								'description' => __( 'The block editor category the block registers into, verbatim from block.json (almost always "designsetgo").', 'designsetgo' ),
+								'description' => __( 'The block editor category the block registers into, verbatim from block.json. A core category (design, media, text, widgets, theme) matching the core block it stands in for.', 'designsetgo' ),
 							),
 							'group'       => array(
 								'type'        => 'string',
@@ -223,6 +228,7 @@ class List_Blocks extends Abstract_Ability {
 				'name'        => $block_type->name,
 				'title'       => '' !== $block_type->title ? $block_type->title : $this->generate_title_from_name( $block_type->name ),
 				'description' => $block_type->description,
+				'keywords'    => array_values( (array) $block_type->keywords ),
 				'category'    => $block_type->category ?? '',
 				'group'       => self::get_block_group( $block_type->name ),
 				'supports'    => $this->format_supports( $block_type->supports ?? array() ),

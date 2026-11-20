@@ -4,7 +4,7 @@
   "name": "designsetgo/query-pagination",
   "version": "1.0.0",
   "title": "Query Pagination",
-  "category": "designsetgo",
+  "category": "theme",
   "ancestor": [
     "designsetgo/query"
   ],
